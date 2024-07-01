@@ -5,4 +5,5 @@ type Controller interface {
 	GetDrone(id int) Drone
 	Events() <-chan Event
 	Broadcast(msg any) error
+	BroadcastRTCM(buf []byte) error
 }

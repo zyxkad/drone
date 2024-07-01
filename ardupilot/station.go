@@ -3,6 +3,7 @@ package ardupilot
 import (
 	"fmt"
 	"time"
+	"sync/atomic"
 
 	"github.com/zyxkad/drone"
 
@@ -17,6 +18,8 @@ type Controller struct {
 	drones   map[int]*Drone
 	events   chan drone.Event
 	closedCh chan struct{}
+
+	rtcmSeqCount atomic.Uint32
 }
 
 var _ drone.Controller = (*Controller)(nil)
@@ -38,7 +41,7 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 	c := &Controller{
 		node:     node,
 		drones:   make(map[int]*Drone),
-		events:   make(chan drone.Event, 7),
+		events:   make(chan drone.Event, 8),
 		closedCh: make(chan struct{}, 0),
 	}
 	go c.handleEvents()
@@ -70,6 +73,45 @@ func (c *Controller) Broadcast(msg any) error {
 		return c.node.WriteMessageAll(msg)
 	}
 	panic(fmt.Errorf("Unexpected message type %T", msg))
+}
+
+func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
+	n := len(buf)
+
+	const MSG_LEN = 180
+	seqCount := (byte)(c.rtcmSeqCount.Add(1) - 1) & 0x1f
+	if n <= MSG_LEN {
+		msg := &ardupilotmega.MessageGpsRtcmData{
+			Flags: seqCount << 3,
+			Len:   (uint8)(n),
+		}
+		copy(msg.Data[:], buf)
+		return []message.Message{msg}
+	}
+	if n > 4*MSG_LEN {
+		return nil
+	}
+	msgs := make([]message.Message, 0, 4)
+	for i := (byte)(0); len(buf) > 0 && i < 4; i++ {
+		msg := &ardupilotmega.MessageGpsRtcmData{
+			Flags: 0x01 | (i << 1) | (seqCount << 3),
+			Len:   (uint8)(min(len(buf), MSG_LEN)),
+		}
+		copy(msg.Data[:], buf[:msg.Len])
+		buf = buf[msg.Len:]
+		msgs = append(msgs, msg)
+	}
+	return msgs
+}
+
+func (c *Controller) BroadcastRTCM(buf []byte) error {
+	msgs := c.encodeRTCMAsMessages(buf)
+	for _, msg := range msgs {
+		if err := c.node.WriteMessageAll(msg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Controller) sendEvent(e drone.Event) {

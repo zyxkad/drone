@@ -1,12 +1,16 @@
 package drone
 
 import (
-	"strings"
+	"bufio"
+	"io"
 	"runtime"
+	"strings"
+	"time"
 
-	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
-	"github.com/bluenviron/gomavlib/v3/pkg/message"
+	"github.com/go-gnss/rtcm/rtcm3"
 	"go.bug.st/serial"
+
+	"github.com/daedaleanai/ublox/ubx"
 )
 
 func GetPortsList() ([]string, error) {
@@ -27,13 +31,22 @@ func GetPortsList() ([]string, error) {
 }
 
 type RTK struct {
-	port      serial.Port
-	fragCount byte
+	port     serial.Port
+	br       *bufio.Reader
+
+	rtcmMsgs chan rtcm3.Frame
+	ubxMsgs  chan ubx.Message
 }
 
-func OpenRTK(portName string, baudRate int) (*RTK, error) {
+type RTKConfig struct {
+	BaudRate     int
+	SvinMinDur   time.Duration
+	SvinAccLimit float32 // in meters
+}
+
+func OpenRTK(portName string, cfg RTKConfig) (*RTK, error) {
 	port, err := serial.Open(portName, &serial.Mode{
-		BaudRate: baudRate,
+		BaudRate: cfg.BaudRate,
 		DataBits: 8,
 		Parity:   serial.NoParity,
 		StopBits: serial.OneStopBit,
@@ -41,51 +54,120 @@ func OpenRTK(portName string, baudRate int) (*RTK, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RTK{
-		port: port,
-	}, nil
+	if err := configurePort(cfg, port); err != nil {
+		return nil, err
+	}
+	r := &RTK{
+		port:     port,
+		br:       bufio.NewReader(port),
+		rtcmMsgs: make(chan rtcm3.Frame, 8),
+	}
+	go r.handleMessages()
+	return r, nil
 }
 
-func (r *RTK) Read(buf []byte) (int, error) {
-	return r.port.Read(buf)
+func configurePort(cfg RTKConfig, port serial.Port) error {
+	if buf, err := ubx.Encode(ubx.CfgPrt1{
+		PortID:          0x01,
+		Mode:            0x000008D0,
+		BaudRate_bits_s: (uint32)(cfg.BaudRate),
+		InProtoMask:     ubx.CfgPrt1InUbx,
+		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
+	}); err != nil {
+		return err
+	} else if _, err := port.Write(buf); err != nil {
+		return err
+	}
+	if buf, err := ubx.Encode(ubx.CfgPrt1{
+		PortID:          0x03,
+		Mode:            0x000008D0,
+		BaudRate_bits_s: (uint32)(cfg.BaudRate),
+		InProtoMask:     ubx.CfgPrt1InUbx,
+		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
+	}); err != nil {
+		return err
+	} else if _, err := port.Write(buf); err != nil {
+		return err
+	}
+
+	if buf, err := ubx.Encode(ubx.CfgTmode3{
+		Version:      0x00,
+		Flags:        0x01,
+		SvinMinDur_s: (uint32)((cfg.SvinMinDur + time.Second - 1) / time.Second),
+		SvinAccLimit: (uint32)(cfg.SvinAccLimit * 1e4),
+	}); err != nil {
+		return err
+	} else if _, err := port.Write(buf); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *RTK) Close() error {
 	return r.port.Close()
 }
 
-func (r *RTK) ReadAsMessages(buf []byte) ([]message.Message, error) {
-	n, err := r.Read(buf)
-	if err != nil {
-		return nil, err
+func (r *RTK) handleMessages() error {
+	newRtcmMsg := make(chan struct{}, 1)
+	newUbxMsg := make(chan struct{}, 1)
+	for {
+		b, err := r.br.ReadByte()
+		if err != nil {
+			return err
+		}
+		switch b {
+		case rtcm3.FramePreamble:
+			if err := r.br.UnreadByte(); err != nil {
+				return err
+			}
+			if fm, err := rtcm3.DeserializeFrame(r.br); err == nil {
+				select {
+				case newRtcmMsg <- struct{}{}:
+				default:
+				}
+				go func() {
+					select {
+					case r.rtcmMsgs <- fm:
+					case <-newRtcmMsg:
+					}
+				}()
+			}
+		case 0xb5:
+			if err := r.br.UnreadByte(); err != nil {
+				return err
+			}
+			header, err := r.br.Peek(8)
+			if err != nil {
+				return err
+			}
+			if header[1] != 0x62 {
+				break
+			}
+			size := (int)(header[4]) | (int)(header[5])<<8
+			buf := make([]byte, 6+size+2)
+			if _, err := io.ReadFull(r.br, buf); err != nil {
+				return err
+			}
+			if msg, err := ubx.Decode(buf); err == nil {
+				select {
+				case newUbxMsg <- struct{}{}:
+				default:
+				}
+				go func() {
+					select {
+					case r.ubxMsgs <- msg:
+					case <-newUbxMsg:
+					}
+				}()
+			}
+		}
 	}
-	if n == 0 {
-		return nil, nil
-	}
+}
 
-	const MSG_LEN = 180
-	msgs := make([]message.Message, 0, (n+MSG_LEN-1)/MSG_LEN)
-	fragCount := r.fragCount
-	r.fragCount = (r.fragCount + 1) & 0x03
-	seq := (byte)(0)
-	i := 0
-	for ; i+MSG_LEN <= n; i += MSG_LEN {
-		msg := &common.MessageGpsRtcmData{
-			Flags: 0x01 | (fragCount << 1) | (seq << 3),
-			Len:   MSG_LEN,
-		}
-		copy(msg.Data[:], buf[i:i+MSG_LEN])
-		msgs = append(msgs, msg)
-		seq = (seq + 1) & 0x1f
-	}
-	if i < n {
-		msg := new(common.MessageGpsRtcmData)
-		msg.Flags = (fragCount << 1) | (seq << 3)
-		if seq > 0 {
-			msg.Flags |= 0x01
-		}
-		msg.Len = (uint8)(copy(msg.Data[:], buf[i:n]))
-		msgs = append(msgs, msg)
-	}
-	return msgs, nil
+func (r *RTK) RTCMFrames() <-chan rtcm3.Frame {
+	return r.rtcmMsgs
+}
+
+func (r *RTK) UbxMessages() <-chan ubx.Message {
+	return r.ubxMsgs
 }

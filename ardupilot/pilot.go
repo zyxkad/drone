@@ -3,6 +3,7 @@ package ardupilot
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,18 +21,18 @@ type Drone struct {
 	channel    *gomavlib.Channel
 	id         int
 
+	mux sync.RWMutex
+
 	lastActivate  time.Time
 	activeTimeout time.Duration
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
 
-	posType          ardupilotmega.GPS_FIX_TYPE
-	pos              *vec3.T
-	rotate           *vec3.T
-	batteryVoltage   uint16
-	batteryCurrent   int16
-	batteryRemaining int8
-	customMode       uint32
+	posType    ardupilotmega.GPS_FIX_TYPE
+	pos        *vec3.T
+	rotate     *vec3.T
+	battery    drone.BatteryStat
+	customMode uint32
 }
 
 var _ drone.Drone = (*Drone)(nil)
@@ -47,10 +48,12 @@ func newDrone(c *Controller, channel *gomavlib.Channel, id int) *Drone {
 }
 
 func (d *Drone) String() string {
-	return fmt.Sprintf("<ardupilot.Drone id=%d gpsType=%s gps=[%s] battery={%fV %fA %d%%} mode=%d>",
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return fmt.Sprintf("<ardupilot.Drone id=%d gpsType=%s gps=[%s] battery=%s mode=%d>",
 		d.id,
 		d.posType.String(), d.pos,
-		(float32)(d.batteryVoltage) / 1000, (float32)(d.batteryCurrent) / 1000, d.batteryRemaining,
+		d.battery,
 		d.customMode)
 }
 
@@ -62,15 +65,27 @@ func (d *Drone) Name() string {
 	return fmt.Sprint(d.id)
 }
 
-func (d *Drone) GetPos() vec3.T {
-	return *d.pos
+func (d *Drone) GetPos() *vec3.T {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.pos
 }
 
-func (d *Drone) GetRotate() vec3.T {
-	return *d.rotate
+func (d *Drone) GetRotate() *vec3.T {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.rotate
+}
+
+func (d *Drone) GetBattery() drone.BatteryStat {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.battery
 }
 
 func (d *Drone) LastActivate() time.Time {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
 	return d.lastActivate
 }
 
@@ -89,6 +104,9 @@ func (d *Drone) SendMessage(msg any) error {
 }
 
 func (d *Drone) handleMessage(msg message.Message) {
+	d.mux.Lock()
+	defer d.mux.Unlock()
+
 	d.lastActivate = time.Now()
 	if d.inactiveTimer == nil {
 		d.inactiveTimer = time.AfterFunc(d.activeTimeout, func() {
@@ -109,18 +127,33 @@ func (d *Drone) handleMessage(msg message.Message) {
 	}
 	switch msg := msg.(type) {
 	case *ardupilotmega.MessageSysStatus:
-		d.batteryVoltage = msg.VoltageBattery
-		d.batteryCurrent = msg.CurrentBattery
-		d.batteryRemaining = msg.BatteryRemaining
+		d.battery = drone.BatteryStat{
+			Voltage:   msg.VoltageBattery,
+			Current:   msg.CurrentBattery,
+			Remaining: msg.BatteryRemaining,
+		}
+		d.controller.sendEvent(&drone.EventDroneStatusChanged{
+			Drone: d,
+		})
 	case *ardupilotmega.MessageGpsRawInt:
-		d.posType = msg.FixType
+		if d.posType != msg.FixType {
+			d.posType = msg.FixType
+			d.controller.sendEvent(&drone.EventDroneStatusChanged{
+				Drone: d,
+			})
+		}
 		d.pos = &vec3.T{
 			(float32)(msg.Lat) / 1e7,
 			(float32)(msg.Lon) / 1e7,
 			(float32)(msg.Alt) / 1e4,
 		}
 	case *ardupilotmega.MessageHeartbeat:
-		d.customMode = msg.CustomMode
+		if d.customMode != msg.CustomMode {
+			d.customMode = msg.CustomMode
+			d.controller.sendEvent(&drone.EventDroneStatusChanged{
+				Drone: d,
+			})
+		}
 	}
 }
 

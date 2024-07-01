@@ -1,4 +1,3 @@
-
 package drone
 
 import (
@@ -31,4 +30,16 @@ func (*EventDroneDisconnected) GetType() string {
 
 func (e *EventDroneDisconnected) String() string {
 	return fmt.Sprintf("<EventDroneDisconnected drone=%s>", e.Drone)
+}
+
+type EventDroneStatusChanged struct {
+	Drone Drone
+}
+
+func (*EventDroneStatusChanged) GetType() string {
+	return "DRONE_STATUS_CHANGED"
+}
+
+func (e *EventDroneStatusChanged) String() string {
+	return fmt.Sprintf("<EventDroneStatusChanged drone=%s>", e.Drone)
 }
