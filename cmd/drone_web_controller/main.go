@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
-type Controller interface {
-	Drones() []Drone
-	GetDrone(id int) Drone
-	Events() <-chan Event
-	Broadcast(msg any) error
-	BroadcastRTCM(buf []byte) error
+import (
+	"fmt"
+)
+
+func main(){
+	fmt.Println(LICENSE_SHORT)
 }

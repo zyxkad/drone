@@ -14,12 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
-type Controller interface {
-	Drones() []Drone
-	GetDrone(id int) Drone
-	Events() <-chan Event
-	Broadcast(msg any) error
-	BroadcastRTCM(buf []byte) error
-}
+const LICENSE_SHORT = `drone_web_controller  Copyright (C) 2024  Kevin Z <zyxkad@gmail.com>
+This program comes with ABSOLUTELY NO WARRANTY;
+This is free software, and you are welcome to redistribute it
+under certain conditions; use subcommand 'license' for details.
+`
