@@ -78,9 +78,9 @@ func (c *Controller) Broadcast(msg any) error {
 func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 	n := len(buf)
 
-	const MSG_LEN = 180
+	const MAX_MSG_LEN = 180
 	seqCount := (byte)(c.rtcmSeqCount.Add(1) - 1) & 0x1f
-	if n <= MSG_LEN {
+	if n <= MAX_MSG_LEN {
 		msg := &ardupilotmega.MessageGpsRtcmData{
 			Flags: seqCount << 3,
 			Len:   (uint8)(n),
@@ -88,15 +88,14 @@ func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 		copy(msg.Data[:], buf)
 		return []message.Message{msg}
 	}
-	if n > 4*MSG_LEN {
+	if n > 4*MAX_MSG_LEN {
 		return nil
 	}
 	msgs := make([]message.Message, 0, 4)
 	for i := (byte)(0); len(buf) > 0 && i < 4; i++ {
-		msg := &ardupilotmega.MessageGpsRtcmData{
-			Flags: 0x01 | (i << 1) | (seqCount << 3),
-			Len:   (uint8)(min(len(buf), MSG_LEN)),
-		}
+		msg := new(ardupilotmega.MessageGpsRtcmData)
+		msg.Flags = 0x01 | (i << 1) | (seqCount << 3)
+		msg.Len = (uint8)(min(len(buf), MAX_MSG_LEN))
 		copy(msg.Data[:], buf[:msg.Len])
 		buf = buf[msg.Len:]
 		msgs = append(msgs, msg)
@@ -141,6 +140,15 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 	case *gomavlib.EventChannelClose:
 		// fmt.Printf("Channel %T closed: %s\n", event.Channel, event.Channel.String())
 	case *gomavlib.EventFrame:
+		msg := event.Message()
+		checksum := event.Frame.GetChecksum()
+		if err := c.node.FixFrame(event.Frame); err != nil {
+			return
+		}
+		if checksum != event.Frame.GetChecksum() {
+			return
+		}
+
 		droneId := (int)(event.SystemID())
 		d, ok := c.drones[droneId]
 		if !ok {
@@ -148,7 +156,7 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 			c.drones[droneId] = d
 		}
 		if d != nil {
-			d.handleMessage(event.Message())
+			d.handleMessage(msg)
 		}
 	}
 }

@@ -203,7 +203,6 @@ func (f *V2Frame) decode(br *bufio.Reader) error {
 		f.Signature = new(V2Signature)
 		copy(f.Signature[:], buf[7:])
 	}
-
 	return nil
 }
 

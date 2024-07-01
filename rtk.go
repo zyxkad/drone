@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daedaleanai/ublox/ubx"
 	"github.com/go-gnss/rtcm/rtcm3"
 	"go.bug.st/serial"
-
-	"github.com/daedaleanai/ublox/ubx"
 )
 
 func GetPortsList() ([]string, error) {
@@ -31,8 +30,8 @@ func GetPortsList() ([]string, error) {
 }
 
 type RTK struct {
-	port     serial.Port
-	br       *bufio.Reader
+	port serial.Port
+	br   *bufio.Reader
 
 	rtcmMsgs chan rtcm3.Frame
 	ubxMsgs  chan ubx.Message
@@ -54,50 +53,49 @@ func OpenRTK(portName string, cfg RTKConfig) (*RTK, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := configurePort(cfg, port); err != nil {
-		return nil, err
-	}
 	r := &RTK{
 		port:     port,
 		br:       bufio.NewReader(port),
 		rtcmMsgs: make(chan rtcm3.Frame, 8),
+		ubxMsgs:  make(chan ubx.Message, 8),
+	}
+	if err := r.setupPort(cfg); err != nil {
+		return nil, err
 	}
 	go r.handleMessages()
 	return r, nil
 }
 
-func configurePort(cfg RTKConfig, port serial.Port) error {
-	if buf, err := ubx.Encode(ubx.CfgPrt1{
-		PortID:          0x01,
-		Mode:            0x000008D0,
+func (r *RTK) setupPort(cfg RTKConfig) error {
+	mode := ubx.CfgPrt1CharLen&0xc0 | ubx.CfgPrt1Parity&0x800 | ubx.CfgPrt1NStopBits&0x2000
+	if err := r.sendUBXMessage(ubx.CfgPrt1{
+		PortID:          0x00,
+		Mode:            mode,
 		BaudRate_bits_s: (uint32)(cfg.BaudRate),
 		InProtoMask:     ubx.CfgPrt1InUbx,
 		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
 	}); err != nil {
-		return err
-	} else if _, err := port.Write(buf); err != nil {
 		return err
 	}
-	if buf, err := ubx.Encode(ubx.CfgPrt1{
+	if err := r.sendUBXMessage(ubx.CfgPrt1{
 		PortID:          0x03,
-		Mode:            0x000008D0,
+		Mode:            mode,
 		BaudRate_bits_s: (uint32)(cfg.BaudRate),
 		InProtoMask:     ubx.CfgPrt1InUbx,
 		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
 	}); err != nil {
-		return err
-	} else if _, err := port.Write(buf); err != nil {
 		return err
 	}
 
-	if buf, err := ubx.Encode(ubx.CfgTmode3{
+	if err := r.configureMessageRate(0x01, 0x3b, 1); err != nil {
+		return err
+	}
+	if err := r.sendUBXMessage(ubx.CfgTmode3{
 		Version:      0x00,
 		Flags:        0x01,
 		SvinMinDur_s: (uint32)((cfg.SvinMinDur + time.Second - 1) / time.Second),
 		SvinAccLimit: (uint32)(cfg.SvinAccLimit * 1e4),
 	}); err != nil {
-		return err
-	} else if _, err := port.Write(buf); err != nil {
 		return err
 	}
 	return nil
@@ -107,9 +105,61 @@ func (r *RTK) Close() error {
 	return r.port.Close()
 }
 
+func (r *RTK) RTCMFrames() <-chan rtcm3.Frame {
+	return r.rtcmMsgs
+}
+
+func (r *RTK) UBXMessages() <-chan ubx.Message {
+	return r.ubxMsgs
+}
+
+func (r *RTK) sendUBXMessage(msg ubx.Message) error {
+	if buf, err := ubx.Encode(msg); err != nil {
+		return err
+	} else if _, err := r.port.Write(buf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *RTK) configureMessageRate(class, id byte, rate byte) error {
+	return r.sendUBXMessage(ubx.CfgMsg1{
+		MsgClass: class,
+		MsgID: id,
+		Rate: rate,
+	})
+}
+
+func (r *RTK) ActivateRTCM() error {
+	if err := r.sendUBXMessage(ubx.CfgRate{
+		MeasRate_ms:    1000,
+		NavRate_cycles: 1,
+		TimeRef:        0,
+	}); err != nil {
+		return err
+	}
+	r.configureMessageRate(0x01, 0x3b, 0)
+	if err := r.configureMessageRate(0xF5, 0x05, 5); err != nil {
+		return err
+	}
+	if err := r.configureMessageRate(0xF5, 0x4D, 1); err != nil {
+		return err
+	}
+	if err := r.configureMessageRate(0xF5, 0x57, 1); err != nil {
+		return err
+	}
+	if err := r.configureMessageRate(0xF5, 0xE6, 1); err != nil {
+		return err
+	}
+	if err := r.configureMessageRate(0xF5, 0x7F, 1); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (r *RTK) handleMessages() error {
-	newRtcmMsg := make(chan struct{}, 1)
-	newUbxMsg := make(chan struct{}, 1)
+	newRtcmMsg := make(chan struct{}, 0)
+	newUbxMsg := make(chan struct{}, 0)
 	for {
 		b, err := r.br.ReadByte()
 		if err != nil {
@@ -162,12 +212,4 @@ func (r *RTK) handleMessages() error {
 			}
 		}
 	}
-}
-
-func (r *RTK) RTCMFrames() <-chan rtcm3.Frame {
-	return r.rtcmMsgs
-}
-
-func (r *RTK) UbxMessages() <-chan ubx.Message {
-	return r.ubxMsgs
 }

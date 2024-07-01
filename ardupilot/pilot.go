@@ -145,7 +145,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.pos = &vec3.T{
 			(float32)(msg.Lat) / 1e7,
 			(float32)(msg.Lon) / 1e7,
-			(float32)(msg.Alt) / 1e4,
+			(float32)(msg.Alt) / 1e3,
 		}
 	case *ardupilotmega.MessageHeartbeat:
 		if d.customMode != msg.CustomMode {
