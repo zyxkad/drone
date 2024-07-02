@@ -146,16 +146,13 @@ func (r *RTK) Open() error {
 	go func() {
 		err := r.handleMessages()
 		r.opened.Store(0)
-		var pe serial.PortError
-		if !errors.As(err, &pe) {
-			return
-		} else if pe.Code() != serial.PortClosed {
+		if err == nil {
 			return
 		}
 		time.Sleep(time.Second * 3)
 		for !r.closed.Load() {
 			err := r.Open()
-			if err == os.ErrClosed {
+			if err == nil || err == os.ErrClosed {
 				return
 			}
 			time.Sleep(time.Second)
