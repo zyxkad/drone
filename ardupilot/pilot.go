@@ -23,13 +23,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zyxkad/drone"
-
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
 	"github.com/ungerik/go3d/vec3"
+
+	"github.com/zyxkad/drone"
 )
 
 type Drone struct {
@@ -81,6 +81,12 @@ func (d *Drone) Name() string {
 	return fmt.Sprint(d.id)
 }
 
+func (d *Drone) GetPosType() int {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return (int)(d.posType)
+}
+
 func (d *Drone) GetPos() *vec3.T {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
@@ -97,6 +103,12 @@ func (d *Drone) GetBattery() drone.BatteryStat {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.battery
+}
+
+func (d *Drone) GetMode() int {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return (int)(d.customMode)
 }
 
 func (d *Drone) LastActivate() time.Time {

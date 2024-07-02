@@ -17,9 +17,30 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
+	"net/http"
 )
 
-func main(){
-	fmt.Println(LICENSE_SHORT)
+var (
+	addr string = "localhost:5001"
+)
+
+func parseFlags() {
+	flag.StringVar(&addr, "addr", addr, "The address the http server going to listen on")
+	flag.Parse()
+}
+
+func main() {
+	parseFlags()
+	subCmd := flag.Arg(1)
+	if subCmd == "license" {
+		fmt.Println(LICENSE_LONG)
+		return
+	}
+	fmt.Print(LICENSE_SHORT)
+	server := NewServer()
+	log.Println("Server start at", "http://"+addr)
+	http.ListenAndServe(addr, server.Handler())
 }

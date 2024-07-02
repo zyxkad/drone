@@ -14,13 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
-type Controller interface {
-	Close() error
-	Drones() []Drone
-	GetDrone(id int) Drone
-	Events() <-chan Event
-	Broadcast(msg any) error
-	BroadcastRTCM(buf []byte) error
+func (s *Server) BroadcastEvent(event string, data any) {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	for _, ws := range s.sockets {
+		go ws.WriteMessage(event, data)
+	}
 }

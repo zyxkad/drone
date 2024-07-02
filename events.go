@@ -59,3 +59,29 @@ func (*EventDroneStatusChanged) GetType() string {
 func (e *EventDroneStatusChanged) String() string {
 	return fmt.Sprintf("<EventDroneStatusChanged drone=%s>", e.Drone)
 }
+
+type EventChannelOpen struct {
+	Endpoint any
+	Channel  string
+}
+
+func (*EventChannelOpen) GetType() string {
+	return "CHANNEL_OPEN"
+}
+
+func (e *EventChannelOpen) String() string {
+	return fmt.Sprintf("<EventChannelOpen endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
+}
+
+type EventChannelClose struct {
+	Endpoint any
+	Channel  string
+}
+
+func (*EventChannelClose) GetType() string {
+	return "CHANNEL_CLOSE"
+}
+
+func (e *EventChannelClose) String() string {
+	return fmt.Sprintf("<EventChannelClose endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
+}

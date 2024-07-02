@@ -16,8 +16,16 @@
 
 package main
 
+import (
+	_ "embed"
+)
+
 const LICENSE_SHORT = `drone_web_controller  Copyright (C) 2024  Kevin Z <zyxkad@gmail.com>
 This program comes with ABSOLUTELY NO WARRANTY;
 This is free software, and you are welcome to redistribute it
 under certain conditions; use subcommand 'license' for details.
+
 `
+
+//go:embed LICENSE
+var LICENSE_LONG string

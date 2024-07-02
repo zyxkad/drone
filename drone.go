@@ -29,9 +29,11 @@ type Drone interface {
 
 	ID() int
 	Name() string
+	GetPosType() int
 	GetPos() *vec3.T
 	GetRotate() *vec3.T
 	GetBattery() BatteryStat
+	GetMode() int
 	LastActivate() time.Time
 
 	Ping(ctx context.Context) (*Pong, error)
@@ -45,9 +47,9 @@ type Drone interface {
 }
 
 type BatteryStat struct {
-	Voltage   uint16
-	Current   int16
-	Remaining int8
+	Voltage   uint16 `json:"voltage"`
+	Current   int16  `json:"current"`
+	Remaining int8   `json:"remaining"`
 }
 
 func (s BatteryStat) String() string {

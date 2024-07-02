@@ -18,15 +18,15 @@ package ardupilot
 
 import (
 	"fmt"
-	"time"
 	"sync/atomic"
-
-	"github.com/zyxkad/drone"
+	"time"
 
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
+
+	"github.com/zyxkad/drone"
 )
 
 type Controller struct {
@@ -64,6 +64,11 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 	return c, nil
 }
 
+func (c *Controller) Close() error {
+	c.node.Close()
+	return nil
+}
+
 func (c *Controller) Drones() (drones []drone.Drone) {
 	drones = make([]drone.Drone, 0, len(c.drones))
 	for _, d := range c.drones {
@@ -95,7 +100,7 @@ func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 	n := len(buf)
 
 	const MAX_MSG_LEN = 180
-	seqCount := (byte)(c.rtcmSeqCount.Add(1) - 1) & 0x1f
+	seqCount := (byte)(c.rtcmSeqCount.Add(1)-1) & 0x1f
 	if n <= MAX_MSG_LEN {
 		msg := &ardupilotmega.MessageGpsRtcmData{
 			Flags: seqCount << 3,
@@ -152,9 +157,15 @@ func (c *Controller) handleEvents() {
 func (c *Controller) handleEvent(event gomavlib.Event) {
 	switch event := event.(type) {
 	case *gomavlib.EventChannelOpen:
-		fmt.Printf("Channel %T opened: %s\n", event.Channel, event.Channel.String())
+		c.sendEvent(&drone.EventChannelOpen{
+			Endpoint: event.Channel.Endpoint().Conf(),
+			Channel:  event.Channel.String(),
+		})
 	case *gomavlib.EventChannelClose:
-		fmt.Printf("Channel %T closed: %s\n", event.Channel, event.Channel.String())
+		c.sendEvent(&drone.EventChannelClose{
+			Endpoint: event.Channel.Endpoint().Conf(),
+			Channel:  event.Channel.String(),
+		})
 	case *gomavlib.EventFrame:
 		msg := event.Message()
 		checksum := event.Frame.GetChecksum()

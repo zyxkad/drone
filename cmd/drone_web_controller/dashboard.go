@@ -14,13 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
-type Controller interface {
-	Close() error
-	Drones() []Drone
-	GetDrone(id int) Drone
-	Events() <-chan Event
-	Broadcast(msg any) error
-	BroadcastRTCM(buf []byte) error
-}
+import (
+	"embed"
+	"io/fs"
+	"net/http"
+)
+
+//go:embed dashboard/dist
+var _dashboardDist embed.FS
+var dashboardDist = func() fs.FS {
+	s, e := fs.Sub(_dashboardDist, "dashboard/dist")
+	if e != nil {
+		panic(e)
+	}
+	return s
+}()
+
+var dashboardHandler http.Handler = http.FileServerFS(dashboardDist)

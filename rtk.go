@@ -18,9 +18,12 @@ package drone
 
 import (
 	"bufio"
+	"errors"
 	"io"
+	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/daedaleanai/ublox/ubx"
@@ -49,45 +52,40 @@ type RTK struct {
 	port serial.Port
 	br   *bufio.Reader
 
+	cfg RTKConfig
+
 	rtcmMsgs chan rtcm3.Frame
 	ubxMsgs  chan ubx.Message
+	opened   atomic.Int32
+	closed   atomic.Bool
 }
 
 type RTKConfig struct {
+	Device       string
 	BaudRate     int
 	SvinMinDur   time.Duration
 	SvinAccLimit float32 // in meters
 }
 
-func OpenRTK(portName string, cfg RTKConfig) (*RTK, error) {
-	port, err := serial.Open(portName, &serial.Mode{
-		BaudRate: cfg.BaudRate,
-		DataBits: 8,
-		Parity:   serial.NoParity,
-		StopBits: serial.OneStopBit,
-	})
-	if err != nil {
-		return nil, err
-	}
+func OpenRTK(cfg RTKConfig) (*RTK, error) {
 	r := &RTK{
-		port:     port,
-		br:       bufio.NewReader(port),
+		br:       bufio.NewReader(nil),
+		cfg:      cfg,
 		rtcmMsgs: make(chan rtcm3.Frame, 8),
 		ubxMsgs:  make(chan ubx.Message, 8),
 	}
-	if err := r.setupPort(cfg); err != nil {
+	if err := r.Open(); err != nil {
 		return nil, err
 	}
-	go r.handleMessages()
 	return r, nil
 }
 
-func (r *RTK) setupPort(cfg RTKConfig) error {
+func (r *RTK) setupPort() error {
 	mode := ubx.CfgPrt1CharLen&0xc0 | ubx.CfgPrt1Parity&0x800 | ubx.CfgPrt1NStopBits&0x2000
 	if err := r.sendUBXMessage(ubx.CfgPrt1{
 		PortID:          0x00,
 		Mode:            mode,
-		BaudRate_bits_s: (uint32)(cfg.BaudRate),
+		BaudRate_bits_s: (uint32)(r.cfg.BaudRate),
 		InProtoMask:     ubx.CfgPrt1InUbx,
 		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
 	}); err != nil {
@@ -96,7 +94,7 @@ func (r *RTK) setupPort(cfg RTKConfig) error {
 	if err := r.sendUBXMessage(ubx.CfgPrt1{
 		PortID:          0x03,
 		Mode:            mode,
-		BaudRate_bits_s: (uint32)(cfg.BaudRate),
+		BaudRate_bits_s: (uint32)(r.cfg.BaudRate),
 		InProtoMask:     ubx.CfgPrt1InUbx,
 		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
 	}); err != nil {
@@ -109,8 +107,8 @@ func (r *RTK) setupPort(cfg RTKConfig) error {
 	if err := r.sendUBXMessage(ubx.CfgTmode3{
 		Version:      0x00,
 		Flags:        0x01,
-		SvinMinDur_s: (uint32)((cfg.SvinMinDur + time.Second - 1) / time.Second),
-		SvinAccLimit: (uint32)(cfg.SvinAccLimit * 1e4),
+		SvinMinDur_s: (uint32)((r.cfg.SvinMinDur + time.Second - 1) / time.Second),
+		SvinAccLimit: (uint32)(r.cfg.SvinAccLimit * 1e4),
 	}); err != nil {
 		return err
 	}
@@ -118,7 +116,52 @@ func (r *RTK) setupPort(cfg RTKConfig) error {
 }
 
 func (r *RTK) Close() error {
+	r.closed.CompareAndSwap(false, true)
 	return r.port.Close()
+}
+
+func (r *RTK) Open() error {
+	if r.closed.Load() {
+		return os.ErrClosed
+	}
+	if !r.opened.CompareAndSwap(0, 1) {
+		return errors.New("port opened")
+	}
+	defer r.opened.CompareAndSwap(1, 0)
+	port, err := serial.Open(r.cfg.Device, &serial.Mode{
+		BaudRate: r.cfg.BaudRate,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	})
+	if err != nil {
+		return err
+	}
+	r.port = port
+	r.br.Reset(port)
+	if err := r.setupPort(); err != nil {
+		return err
+	}
+	r.opened.Store(2)
+	go func() {
+		err := r.handleMessages()
+		r.opened.Store(0)
+		var pe serial.PortError
+		if !errors.As(err, &pe) {
+			return
+		} else if pe.Code() != serial.PortClosed {
+			return
+		}
+		time.Sleep(time.Second * 3)
+		for !r.closed.Load() {
+			err := r.Open()
+			if err == os.ErrClosed {
+				return
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+	return nil
 }
 
 func (r *RTK) RTCMFrames() <-chan rtcm3.Frame {
@@ -141,8 +184,8 @@ func (r *RTK) sendUBXMessage(msg ubx.Message) error {
 func (r *RTK) configureMessageRate(class, id byte, rate byte) error {
 	return r.sendUBXMessage(ubx.CfgMsg1{
 		MsgClass: class,
-		MsgID: id,
-		Rate: rate,
+		MsgID:    id,
+		Rate:     rate,
 	})
 }
 

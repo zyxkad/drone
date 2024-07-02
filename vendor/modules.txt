@@ -1,3 +1,6 @@
+# github.com/LiterMC/go-aws v1.0.0
+## explicit; go 1.22.0
+github.com/LiterMC/go-aws
 # github.com/bamiaux/iobit v0.0.0-20170418073505-498159a04883
 ## explicit
 github.com/bamiaux/iobit
@@ -22,8 +25,6 @@ github.com/bluenviron/gomavlib/v3/pkg/x25
 github.com/creack/goselect
 # github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
 ## explicit; go 1.11
-github.com/daedaleanai/ublox
-github.com/daedaleanai/ublox/nmea
 github.com/daedaleanai/ublox/ubx
 # github.com/go-gnss/rtcm v0.0.6
 ## explicit; go 1.14
@@ -33,6 +34,9 @@ github.com/go-gnss/rtcm/rtcm3
 ## explicit; go 1.12
 github.com/go-restruct/restruct
 github.com/go-restruct/restruct/expr
+# github.com/gorilla/websocket v1.5.3
+## explicit; go 1.12
+github.com/gorilla/websocket
 # github.com/pion/transport/v2 v2.2.4
 ## explicit; go 1.12
 github.com/pion/transport/v2/deadline
