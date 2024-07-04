@@ -63,7 +63,9 @@ type RTK struct {
 
 	cfg RTKConfig
 
-	rtcmMsgs chan rtcm3.Frame
+	statusVersion atomic.Uint32
+	connectSig chan uint32
+	rtcmMsgs chan *RTCMFrame
 	ubxMsgs  chan ubx.Message
 	opened   atomic.Int32
 	closed   atomic.Bool
@@ -72,15 +74,14 @@ type RTK struct {
 type RTKConfig struct {
 	Device       string
 	BaudRate     int
-	SvinMinDur   time.Duration
-	SvinAccLimit float32 // in meters
 }
 
 func OpenRTK(cfg RTKConfig) (*RTK, error) {
 	r := &RTK{
 		br:       bufio.NewReader(nil),
 		cfg:      cfg,
-		rtcmMsgs: make(chan rtcm3.Frame, 8),
+		connectSig: make(chan uint32, 2),
+		rtcmMsgs: make(chan *RTCMFrame, 8),
 		ubxMsgs:  make(chan ubx.Message, 8),
 	}
 	if err := r.Open(); err != nil {
@@ -106,18 +107,6 @@ func (r *RTK) setupPort() error {
 		BaudRate_bits_s: (uint32)(r.cfg.BaudRate),
 		InProtoMask:     ubx.CfgPrt1InUbx,
 		OutProtoMask:    ubx.CfgPrt1OutUbx | ubx.CfgPrt1OutRtcm3,
-	}); err != nil {
-		return err
-	}
-
-	if err := r.configureMessageRate(0x01, 0x3b, 1); err != nil {
-		return err
-	}
-	if err := r.sendUBXMessage(ubx.CfgTmode3{
-		Version:      0x00,
-		Flags:        0x01,
-		SvinMinDur_s: (uint32)((r.cfg.SvinMinDur + time.Second - 1) / time.Second),
-		SvinAccLimit: (uint32)(r.cfg.SvinAccLimit * 1e4),
 	}); err != nil {
 		return err
 	}
@@ -155,9 +144,11 @@ func (r *RTK) Open() error {
 	if err := r.setupPort(); err != nil {
 		return err
 	}
+	r.updateStatus()
 	r.opened.Store(2)
 	go func() {
 		err := r.handleMessages()
+		r.updateStatus()
 		r.opened.Store(0)
 		if err == nil {
 			return
@@ -174,7 +165,31 @@ func (r *RTK) Open() error {
 	return nil
 }
 
-func (r *RTK) RTCMFrames() <-chan rtcm3.Frame {
+// StatusVersion returns current status of the RTK
+// odd number means the RTK is connected
+// even number means the RTK is not connected
+func (r *RTK) StatusVersion() uint32 {
+	return r.statusVersion.Load()
+}
+
+// ConnectSignal returns the channel which send RTK connect status when it changes
+// odd number means the RTK was connected
+// even number means the RTK was disconnected
+// The channel have a buffer size of 2. You should read it as soon as possible,
+// or the excessive data will be dropped
+func (r *RTK) ConnectSignal() <-chan uint32 {
+	return r.connectSig
+}
+
+func (r *RTK) updateStatus() {
+	status := r.statusVersion.Add(1)
+	select {
+	case r.connectSig <- status:
+	default:
+	}
+}
+
+func (r *RTK) RTCMFrames() <-chan *RTCMFrame {
 	return r.rtcmMsgs
 }
 
@@ -197,6 +212,24 @@ func (r *RTK) configureMessageRate(class, id byte, rate byte) error {
 		MsgID:    id,
 		Rate:     rate,
 	})
+}
+
+// Start RTK survey-in progress
+// minDur: the minium duration the survey in should take
+// accLimit: the accuracy RTK should reach, in meters
+func (r *RTK) StartSurveyIn(minDur time.Duration, accLimit float32) error {
+	if err := r.configureMessageRate(0x01, 0x3b, 1); err != nil {
+		return err
+	}
+	if err := r.sendUBXMessage(ubx.CfgTmode3{
+		Version:      0x00,
+		Flags:        0x01,
+		SvinMinDur_s: (uint32)((minDur + time.Second - 1) / time.Second),
+		SvinAccLimit: (uint32)(accLimit * 1e4),
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *RTK) ActivateRTCM() error {
@@ -240,18 +273,21 @@ func (r *RTK) handleMessages() error {
 				return err
 			}
 			if fm, err := rtcm3.DeserializeFrame(r.br); err == nil {
+				f := &RTCMFrame{
+					Frame: fm,
+				}
 				select {
 				case newRtcmMsg <- struct{}{}:
 				default:
 				}
 				go func() {
 					select {
-					case r.rtcmMsgs <- fm:
+					case r.rtcmMsgs <- f:
 					case <-newRtcmMsg:
 					}
 				}()
 			}
-		case 0xb5:
+		case 0xb5: // For UBX message
 			if err := r.br.UnreadByte(); err != nil {
 				return err
 			}
@@ -279,6 +315,15 @@ func (r *RTK) handleMessages() error {
 					}
 				}()
 			}
+		case '$': // TODO: For NMEA message
 		}
 	}
+}
+
+type RTCMFrame struct {
+	rtcm3.Frame
+}
+
+func (f *RTCMFrame) Message() rtcm3.Message {
+	return rtcm3.DeserializeMessage(f.Payload)
 }
