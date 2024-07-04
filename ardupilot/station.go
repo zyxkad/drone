@@ -125,13 +125,16 @@ func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 		return nil
 	}
 	msgs := make([]message.Message, 0, 4)
-	for i := (byte)(0); len(buf) > 0 && i < 4; i++ {
+	for i := (byte)(0); i < 4; i++ {
 		msg := new(ardupilotmega.MessageGpsRtcmData)
 		msg.Flags = 0x01 | (i << 1) | (seqCount << 3)
 		msg.Len = (uint8)(min(len(buf), MAX_MSG_LEN))
 		copy(msg.Data[:], buf[:msg.Len])
 		buf = buf[msg.Len:]
 		msgs = append(msgs, msg)
+		if msg.Len < MAX_MSG_LEN {
+			break
+		}
 	}
 	return msgs
 }
