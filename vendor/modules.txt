@@ -26,6 +26,8 @@ github.com/creack/goselect
 # github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
 ## explicit; go 1.11
 github.com/daedaleanai/ublox/ubx
+# github.com/ebitengine/purego v0.7.1
+## explicit; go 1.18
 # github.com/go-gnss/rtcm v0.0.6
 ## explicit; go 1.14
 github.com/go-gnss/rtcm
@@ -56,6 +58,7 @@ github.com/ungerik/go3d/vec3
 # go.bug.st/serial v1.6.2
 ## explicit; go 1.17
 go.bug.st/serial
+go.bug.st/serial/enumerator
 go.bug.st/serial/unixutils
 # golang.org/x/net v0.17.0
 ## explicit; go 1.17

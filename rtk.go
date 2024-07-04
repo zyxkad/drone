@@ -21,31 +21,40 @@ import (
 	"errors"
 	"io"
 	"os"
-	"runtime"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/daedaleanai/ublox/ubx"
 	"github.com/go-gnss/rtcm/rtcm3"
 	"go.bug.st/serial"
+	"go.bug.st/serial/enumerator"
 )
 
-func GetPortsList() ([]string, error) {
-	ports, err := serial.GetPortsList()
+type Device struct {
+	Name        string
+	Description string
+}
+
+func GetPortsList() (details []*Device, err error) {
+	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
 		return nil, err
 	}
-	if runtime.GOOS == "darwin" {
-		filtered := ports[:0]
-		for _, port := range ports {
-			if strings.HasPrefix(port, "/dev/cu.") {
-				filtered = append(filtered, port)
-			}
-		}
-		ports = filtered
+	for _, p := range ports {
+		details = append(details, &Device{
+			Name:        p.Name,
+			Description: p.Product,
+		})
 	}
-	return ports, nil
+	return
+}
+
+func (d *Device) String() string {
+	s := d.Name
+	if d.Description != "" {
+		s += " - " + d.Description
+	}
+	return s
 }
 
 type RTK struct {
@@ -113,6 +122,10 @@ func (r *RTK) setupPort() error {
 		return err
 	}
 	return nil
+}
+
+func (r *RTK) Config() RTKConfig {
+	return r.cfg
 }
 
 func (r *RTK) Close() error {

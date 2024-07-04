@@ -8,6 +8,7 @@ require (
 	github.com/bluenviron/gomavlib/v3 v3.0.0 // indirect
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7 // indirect
+	github.com/ebitengine/purego v0.7.1 // indirect
 	github.com/go-gnss/rtcm v0.0.6 // indirect
 	github.com/go-restruct/restruct v1.2.0-alpha.0.20210525045353-983b86fa188e // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

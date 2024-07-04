@@ -29,7 +29,7 @@ type Drone interface {
 
 	ID() int
 	Name() string
-	GetPosType() int
+	GetGPSType() int
 	GetPos() *vec3.T
 	GetRotate() *vec3.T
 	GetBattery() BatteryStat
@@ -40,20 +40,20 @@ type Drone interface {
 	SendMessage(msg any) error
 
 	Arm(ctx context.Context) error
-	Unarm(ctx context.Context) error
+	Disarm(ctx context.Context) error
 	Takeoff(ctx context.Context) error
 	Land(ctx context.Context) error
 	MoveTo(ctx context.Context, pos *vec3.T) error
 }
 
 type BatteryStat struct {
-	Voltage   uint16 `json:"voltage"`
-	Current   int16  `json:"current"`
-	Remaining int8   `json:"remaining"`
+	Voltage   float32 `json:"voltage"`   // In V
+	Current   float32 `json:"current"`   // In A
+	Remaining float32 `json:"remaining"` // In %
 }
 
 func (s BatteryStat) String() string {
-	return fmt.Sprintf("{%.03fV %.03fA %d%%}", (float32)(s.Voltage)/1000, (float32)(s.Current)/100, s.Remaining)
+	return fmt.Sprintf("{%.03fV %.03fA %.1f%%}", s.Voltage, s.Current, s.Remaining*100)
 }
 
 type Pong struct {

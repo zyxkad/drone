@@ -10,6 +10,8 @@ github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7 h1:cGhbdMjiFamF+
 github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7/go.mod h1:pfcwlN8XUYXVYAkPU2LrFZnXIS4EvpZaXh+qRKCN9Sg=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/ebitengine/purego v0.7.1 h1:6/55d26lG3o9VCZX8lping+bZcmShseiqlh2bnUDiPA=
+github.com/ebitengine/purego v0.7.1/go.mod h1:ah1In8AOtksoNK6yk5z1HTJeUkC1Ez4Wk2idgGslMwQ=
 github.com/go-gnss/ntrip v0.0.8/go.mod h1:TBB2ymCoYtH2RfE0Do+mtzmVuZB0gob5b8arEonOXys=
 github.com/go-gnss/rtcm v0.0.6 h1:n1tkSYiLuIGdh5iIn6HB0slylWIZe3XOhuMqyxMnwks=
 github.com/go-gnss/rtcm v0.0.6/go.mod h1:uqfG5wB+gG7VG4NuCfFkTRpNMtia/D5xpgmSeYoq8Fc=

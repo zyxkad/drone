@@ -30,10 +30,12 @@ import (
 )
 
 type Controller struct {
-	node     *gomavlib.Node
-	drones   map[int]*Drone
-	events   chan drone.Event
-	closedCh chan struct{}
+	node      *gomavlib.Node
+	endpoints []gomavlib.EndpointConf
+	id        int
+	drones    map[int]*Drone
+	events    chan drone.Event
+	closedCh  chan struct{}
 
 	rtcmSeqCount atomic.Uint32
 }
@@ -41,11 +43,12 @@ type Controller struct {
 var _ drone.Controller = (*Controller)(nil)
 
 func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
+	const STATION_ID = 0xff
 	node, err := gomavlib.NewNode(gomavlib.NodeConf{
 		Endpoints:       endpoints,
 		Dialect:         ardupilotmega.Dialect,
 		OutVersion:      gomavlib.V2,
-		OutSystemID:     254,
+		OutSystemID:     STATION_ID,
 		HeartbeatPeriod: time.Millisecond * 2500,
 		ReadTimeout:     time.Second * 5,
 		WriteTimeout:    time.Second * 3,
@@ -56,6 +59,7 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 	}
 	c := &Controller{
 		node:     node,
+		id:       STATION_ID,
 		drones:   make(map[int]*Drone),
 		events:   make(chan drone.Event, 8),
 		closedCh: make(chan struct{}, 0),
@@ -67,6 +71,14 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 func (c *Controller) Close() error {
 	c.node.Close()
 	return nil
+}
+
+func (c *Controller) Endpoints() []any {
+	endpoints := make([]any, len(c.endpoints))
+	for i, e := range c.endpoints {
+		endpoints[i] = e
+	}
+	return endpoints
 }
 
 func (c *Controller) Drones() (drones []drone.Drone) {
@@ -177,13 +189,15 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 		}
 
 		droneId := (int)(event.SystemID())
-		d, ok := c.drones[droneId]
-		if !ok {
-			d = newDrone(c, event.Channel, droneId)
-			c.drones[droneId] = d
-		}
-		if d != nil {
-			d.handleMessage(msg)
+		if droneId != c.id {
+			d, ok := c.drones[droneId]
+			if !ok {
+				d = newDrone(c, event.Channel, droneId)
+				c.drones[droneId] = d
+			}
+			if d != nil {
+				d.handleMessage(msg)
+			}
 		}
 	}
 }

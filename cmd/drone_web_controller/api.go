@@ -32,8 +32,11 @@ import (
 func (s *Server) buildAPIRoute() {
 	s.route.HandleFunc("/api/ping", s.routePing)
 	s.route.HandleFunc("/api/io", s.routeIO)
+	s.route.HandleFunc("GET /api/device_ports", s.routeDevicePortsGET)
+	s.route.HandleFunc("GET /api/lora/connect", s.routeLoraConnectGET)
 	s.route.HandleFunc("POST /api/lora/connect", s.routeLoraConnectPOST)
 	s.route.HandleFunc("DELETE /api/lora/connect", s.routeLoraConnectDELETE)
+	s.route.HandleFunc("GET /api/rtk/connect", s.routeRtkConnectGET)
 	s.route.HandleFunc("POST /api/rtk/connect", s.routeRtkConnectPOST)
 	s.route.HandleFunc("DELETE /api/rtk/connect", s.routeRtkConnectDELETE)
 }
@@ -72,6 +75,32 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 		}
 		_ = msg
 	}
+}
+
+func (s *Server) routeDevicePortsGET(rw http.ResponseWriter, req *http.Request) {
+	devices, err := drone.GetPortsList()
+	if err != nil {
+		writeJson(rw, http.StatusInternalServerError, Map{
+			"error": "ReadPortsError",
+			"message": err.Error(),
+		})
+		return
+	}
+	writeJson(rw, http.StatusOK, Map{
+		"devices": devices,
+	})
+}
+
+func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.controller == nil {
+		rw.WriteHeader(http.StatusNotFound)
+		return
+	}
+	writeJson(rw, http.StatusOK, Map{
+		"endpoints": s.controller.Endpoints(),
+	})
 }
 
 func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request) {
@@ -124,13 +153,31 @@ func (s *Server) routeLoraConnectDELETE(rw http.ResponseWriter, req *http.Reques
 	return
 }
 
-func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) {
-	var payload struct {
-		Device        string  `json:"device"`
-		BaudRate      int     `json:"baudrate"`
-		MinDuration   int     `json:"minDur"`
-		AccuracyLimit float32 `json:"accLimit"`
+type RTKCfgPayload struct {
+	Device        string  `json:"device"`
+	BaudRate      int     `json:"baudrate"`
+	MinDuration   int     `json:"minDur"`
+	AccuracyLimit float32 `json:"accLimit"`
+}
+
+func (s *Server) routeRtkConnectGET(rw http.ResponseWriter, req *http.Request) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.rtk == nil {
+		rw.WriteHeader(http.StatusNotFound)
+		return
 	}
+	cfg := s.rtk.Config()
+	writeJson(rw, http.StatusOK, RTKCfgPayload{
+		Device:        cfg.Device,
+		BaudRate:      cfg.BaudRate,
+		MinDuration:   (int)((cfg.SvinMinDur + time.Second - 1) / time.Second),
+		AccuracyLimit: cfg.SvinAccLimit,
+	})
+}
+
+func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) {
+	var payload RTKCfgPayload
 	if !parseRequestBody(rw, req, &payload) {
 		return
 	}

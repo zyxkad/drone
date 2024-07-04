@@ -24,10 +24,10 @@ import (
 type LogLevel string
 
 const (
-	LevelError LogLevel = "ERROR"
+	LevelError LogLevel = "ERRO"
 	LevelWarn  LogLevel = "WARN"
 	LevelInfo  LogLevel = "INFO"
-	LevelDebug LogLevel = "DEBUG"
+	LevelDebug LogLevel = "DBUG"
 )
 
 func (s *Server) Log(level LogLevel, args ...any) {

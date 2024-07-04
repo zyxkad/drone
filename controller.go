@@ -18,6 +18,7 @@ package drone
 
 type Controller interface {
 	Close() error
+	Endpoints() []any
 	Drones() []Drone
 	GetDrone(id int) Drone
 	Events() <-chan Event
