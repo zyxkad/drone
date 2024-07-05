@@ -1,0 +1,3 @@
+[submodule "cmd/drone_web_controller/dashboard"]
+	path = cmd/drone_web_controller/dashboard
+	url = https://github.com/zyxkad/auav_drone_controller_dashboard
