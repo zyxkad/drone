@@ -4,8 +4,8 @@ github.com/LiterMC/go-aws
 # github.com/bamiaux/iobit v0.0.0-20170418073505-498159a04883
 ## explicit
 github.com/bamiaux/iobit
-# github.com/bluenviron/gomavlib/v3 v3.0.0
-## explicit; go 1.19
+# github.com/bluenviron/gomavlib/v3 v3.0.0 => github.com/zyxkad/gomavlib/v3 v3.0.0-20240705035645-9f19b741c445
+## explicit; go 1.20
 github.com/bluenviron/gomavlib/v3
 github.com/bluenviron/gomavlib/v3/pkg/dialect
 github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega
@@ -28,6 +28,10 @@ github.com/creack/goselect
 github.com/daedaleanai/ublox/ubx
 # github.com/ebitengine/purego v0.7.1
 ## explicit; go 1.18
+github.com/ebitengine/purego
+github.com/ebitengine/purego/internal/cgo
+github.com/ebitengine/purego/internal/fakecgo
+github.com/ebitengine/purego/internal/strings
 # github.com/go-gnss/rtcm v0.0.6
 ## explicit; go 1.14
 github.com/go-gnss/rtcm
@@ -39,7 +43,10 @@ github.com/go-restruct/restruct/expr
 # github.com/gorilla/websocket v1.5.3
 ## explicit; go 1.12
 github.com/gorilla/websocket
-# github.com/pion/transport/v2 v2.2.4
+# github.com/pion/logging v0.2.2
+## explicit; go 1.12
+github.com/pion/logging
+# github.com/pion/transport/v2 v2.2.5
 ## explicit; go 1.12
 github.com/pion/transport/v2/deadline
 github.com/pion/transport/v2/packetio
@@ -47,27 +54,27 @@ github.com/pion/transport/v2/udp
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
-# github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
-## explicit
-github.com/tarm/serial
 # github.com/ungerik/go3d v0.0.0-20240502073936-1137f6adf7e9
 ## explicit; go 1.13
 github.com/ungerik/go3d/fmath
 github.com/ungerik/go3d/generic
 github.com/ungerik/go3d/vec3
-# go.bug.st/serial v1.6.2
+# go.bug.st/serial v1.6.2 => github.com/zyxkad/go-serial v1.6.3-0.20240705033605-bc847fb5fdc0
 ## explicit; go 1.17
 go.bug.st/serial
 go.bug.st/serial/enumerator
 go.bug.st/serial/unixutils
-# golang.org/x/net v0.17.0
-## explicit; go 1.17
+# golang.org/x/net v0.23.0
+## explicit; go 1.18
 golang.org/x/net/bpf
 golang.org/x/net/internal/iana
 golang.org/x/net/internal/socket
 golang.org/x/net/ipv4
 golang.org/x/net/ipv6
-# golang.org/x/sys v0.13.0
-## explicit; go 1.17
+# golang.org/x/sys v0.19.0
+## explicit; go 1.18
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+golang.org/x/sys/windows/registry
+# go.bug.st/serial => github.com/zyxkad/go-serial v1.6.3-0.20240705033605-bc847fb5fdc0
+# github.com/bluenviron/gomavlib/v3 => github.com/zyxkad/gomavlib/v3 v3.0.0-20240705035645-9f19b741c445

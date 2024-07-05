@@ -162,7 +162,7 @@ func main() {
 				fmt.Printf("Survey-in: dur=%d acc=%f valid=%v active=%v\n", msg.Dur_s, (float32)(msg.MeanAcc)/1e4, msg.Valid, msg.Active)
 				if msg.Valid == 1 && msg.Active == 0 {
 					fmt.Println("activating rtcm")
-					if err := rtk.ActivateRTCM(); err != nil {
+					if err := rtk.ActivateRTCM(drone.SatelliteAll); err != nil {
 						panic(err)
 					}
 				}

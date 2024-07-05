@@ -64,25 +64,25 @@ type RTK struct {
 	cfg RTKConfig
 
 	statusVersion atomic.Uint32
-	connectSig chan uint32
-	rtcmMsgs chan *RTCMFrame
-	ubxMsgs  chan ubx.Message
-	opened   atomic.Int32
-	closed   atomic.Bool
+	connectSig    chan uint32
+	rtcmMsgs      chan *RTCMFrame
+	ubxMsgs       chan ubx.Message
+	opened        atomic.Int32
+	closed        atomic.Bool
 }
 
 type RTKConfig struct {
-	Device       string
-	BaudRate     int
+	Device   string
+	BaudRate int
 }
 
 func OpenRTK(cfg RTKConfig) (*RTK, error) {
 	r := &RTK{
-		br:       bufio.NewReader(nil),
-		cfg:      cfg,
+		br:         bufio.NewReader(nil),
+		cfg:        cfg,
 		connectSig: make(chan uint32, 2),
-		rtcmMsgs: make(chan *RTCMFrame, 8),
-		ubxMsgs:  make(chan ubx.Message, 8),
+		rtcmMsgs:   make(chan *RTCMFrame, 8),
+		ubxMsgs:    make(chan ubx.Message, 8),
 	}
 	if err := r.Open(); err != nil {
 		return nil, err
@@ -218,9 +218,11 @@ func (r *RTK) configureMessageRate(class, id byte, rate byte) error {
 // minDur: the minium duration the survey in should take
 // accLimit: the accuracy RTK should reach, in meters
 func (r *RTK) StartSurveyIn(minDur time.Duration, accLimit float32) error {
+	// Enable survey-in report
 	if err := r.configureMessageRate(0x01, 0x3b, 1); err != nil {
 		return err
 	}
+	// Configure survey-in
 	if err := r.sendUBXMessage(ubx.CfgTmode3{
 		Version:      0x00,
 		Flags:        0x01,
@@ -232,7 +234,32 @@ func (r *RTK) StartSurveyIn(minDur time.Duration, accLimit float32) error {
 	return nil
 }
 
-func (r *RTK) ActivateRTCM() error {
+type SatelliteCfg struct {
+	GPS     bool
+	GLONASS bool
+	Galileo bool
+	BeiDou  bool
+	PVT     bool
+}
+
+var (
+	SatelliteAll = SatelliteCfg{
+		GPS:     true,
+		GLONASS: true,
+		Galileo: true,
+		BeiDou:  true,
+		PVT:     false,
+	}
+	SatelliteAllPVT = SatelliteCfg{
+		GPS:     true,
+		GLONASS: true,
+		Galileo: true,
+		BeiDou:  true,
+		PVT:     true,
+	}
+)
+
+func (r *RTK) ActivateRTCM(satelliteCfg SatelliteCfg) error {
 	if err := r.sendUBXMessage(ubx.CfgRate{
 		MeasRate_ms:    1000,
 		NavRate_cycles: 1,
@@ -240,21 +267,53 @@ func (r *RTK) ActivateRTCM() error {
 	}); err != nil {
 		return err
 	}
+	// Disable survey-in report
 	r.configureMessageRate(0x01, 0x3b, 0)
-	if err := r.configureMessageRate(0xF5, 0x05, 5); err != nil {
+
+	const (
+		UBX_RTCM3_1005 = 0x05 // Stationary RTK reference station ARP
+		UBX_RTCM3_1074 = 0x4A // GPS MSM4
+		UBX_RTCM3_1077 = 0x4D // GPS MSM7
+		UBX_RTCM3_1084 = 0x54 // GLONASS MSM4
+		UBX_RTCM3_1087 = 0x57 // GLONASS MSM7
+		UBX_RTCM3_1094 = 0x5E // Galileo MSM4
+		UBX_RTCM3_1097 = 0x61 // Galileo MSM7
+		UBX_RTCM3_1124 = 0x7C // BeiDou MSM4
+		UBX_RTCM3_1127 = 0x7F // BeiDou MSM7
+		UBX_RTCM3_1230 = 0xE6 // GLONASS code-phase biases
+		UBX_RTCM3_4072 = 0xFE // Reference station PVT (u-blox proprietary RTCM Message) - Used for moving baseline
+	)
+
+	if err := r.configureMessageRate(0xF5, UBX_RTCM3_1005, 5); err != nil {
 		return err
 	}
-	if err := r.configureMessageRate(0xF5, 0x4D, 1); err != nil {
-		return err
+	if satelliteCfg.GPS {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1077, 1); err != nil {
+			return err
+		}
 	}
-	if err := r.configureMessageRate(0xF5, 0x57, 1); err != nil {
-		return err
+	if satelliteCfg.GLONASS {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1087, 1); err != nil {
+			return err
+		}
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1230, 1); err != nil {
+			return err
+		}
 	}
-	if err := r.configureMessageRate(0xF5, 0xE6, 1); err != nil {
-		return err
+	if satelliteCfg.Galileo {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1097, 1); err != nil {
+			return err
+		}
 	}
-	if err := r.configureMessageRate(0xF5, 0x7F, 1); err != nil {
-		return err
+	if satelliteCfg.BeiDou {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1127, 1); err != nil {
+			return err
+		}
+	}
+	if satelliteCfg.PVT {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_4072, 1); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -315,7 +374,7 @@ func (r *RTK) handleMessages() error {
 					}
 				}()
 			}
-		case '$': // TODO: For NMEA message
+		case '$': // TODO: For NMEA message (is this necessary?)
 		}
 	}
 }

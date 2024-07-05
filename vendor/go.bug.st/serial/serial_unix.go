@@ -1,5 +1,5 @@
 //
-// Copyright 2014-2023 Cristian Maglie. All rights reserved.
+// Copyright 2014-2024 Cristian Maglie. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 //
@@ -10,8 +10,7 @@ package serial
 
 import (
 	"fmt"
-	"io/ioutil"
-	"regexp"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -292,16 +291,12 @@ func nativeOpen(portName string, mode *Mode) (*unixPort, error) {
 }
 
 func nativeGetPortsList() ([]string, error) {
-	files, err := ioutil.ReadDir(devFolder)
+	files, err := os.ReadDir(devFolder)
 	if err != nil {
 		return nil, err
 	}
 
 	ports := make([]string, 0, len(files))
-	regex, err := regexp.Compile(regexFilter)
-	if err != nil {
-		return nil, err
-	}
 	for _, f := range files {
 		// Skip folders
 		if f.IsDir() {
@@ -309,7 +304,7 @@ func nativeGetPortsList() ([]string, error) {
 		}
 
 		// Keep only devices with the correct name
-		if !regex.MatchString(f.Name()) {
+		if !osPortFilter.MatchString(f.Name()) {
 			continue
 		}
 
