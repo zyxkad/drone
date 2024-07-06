@@ -30,11 +30,12 @@ type Drone interface {
 	ID() int
 	Name() string
 	GetGPSType() int
-	GetPos() *vec3.T
+	GetGPS() *Gps
 	GetRotate() *vec3.T
 	GetBattery() BatteryStat
 	GetMode() int
 	LastActivate() time.Time
+	ExtraInfo() any
 
 	Ping(ctx context.Context) (*Pong, error)
 	SendMessage(msg any) error

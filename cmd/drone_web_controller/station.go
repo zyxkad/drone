@@ -47,17 +47,27 @@ func (s *Server) pollStation(station drone.Controller, closeSig <-chan struct{})
 					Id      int               `json:"id"`
 					Mode    int               `json:"mode"`
 					Battery drone.BatteryStat `json:"battery"`
-					PosType int               `json:"posType"`
-					Pos     *vec3.T           `json:"pos"`
-					Rotate  *vec3.T           `json:"rotate"`
+					Extra   any               `json:"extra"`
 				}
 				s.BroadcastEvent("drone-info", &DroneInfoMsg{
 					Id:      d.ID(),
 					Mode:    d.GetMode(),
 					Battery: d.GetBattery(),
-					PosType: d.GetPosType(),
-					Pos:     d.GetPos(),
-					Rotate:  d.GetRotate(),
+					Extra:   d.ExtraInfo(),
+				})
+			case *drone.EventDronePositionChanged:
+				d := event.Drone
+				type DroneInfoMsg struct {
+					Id      int        `json:"id"`
+					GPSType int        `json:"gpsType"`
+					GPS     *drone.Gps `json:"gps"`
+					Rotate  *vec3.T    `json:"rotate"`
+				}
+				s.BroadcastEvent("drone-pos-info", &DroneInfoMsg{
+					Id:      d.ID(),
+					GPSType: event.GPSType,
+					GPS:     event.GPS,
+					Rotate:  event.Rotate,
 				})
 			}
 		case <-closeSig:

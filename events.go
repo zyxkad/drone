@@ -18,6 +18,8 @@ package drone
 
 import (
 	"fmt"
+
+	"github.com/ungerik/go3d/vec3"
 )
 
 type Event interface {
@@ -58,6 +60,34 @@ func (*EventDroneStatusChanged) GetType() string {
 
 func (e *EventDroneStatusChanged) String() string {
 	return fmt.Sprintf("<EventDroneStatusChanged drone=%s>", e.Drone)
+}
+
+type EventDronePositionChanged struct {
+	Drone   Drone
+	GPSType int
+	GPS     *Gps
+	Rotate  *vec3.T
+}
+
+func (*EventDronePositionChanged) GetType() string {
+	return "DRONE_POSITION_CHANGED"
+}
+
+func (e *EventDronePositionChanged) String() string {
+	return fmt.Sprintf("<EventDronePositionChanged drone=%s gpsType=%d gps=%s rotate=%v>", e.Drone, e.GPSType, e.GPS.String(), e.Rotate)
+}
+
+type EventDroneMessage struct {
+	Drone   Drone
+	Message any
+}
+
+func (*EventDroneMessage) GetType() string {
+	return "EVENT_DRONE_MESSAGE"
+}
+
+func (e *EventDroneMessage) String() string {
+	return fmt.Sprintf("<EventDroneMessage drone=%s message=%v>", e.Drone, e.Message)
 }
 
 type EventChannelOpen struct {

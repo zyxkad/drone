@@ -22,7 +22,10 @@ import (
 	"net/http"
 )
 
-//go:embed dashboard/dist
+//go:generate npm -C dashboard ci --progress=false --prefer-offline
+//go:generate npm -C dashboard run build-only
+
+//go:embed all:dashboard/dist
 var _dashboardDist embed.FS
 var dashboardDist = func() fs.FS {
 	s, e := fs.Sub(_dashboardDist, "dashboard/dist")

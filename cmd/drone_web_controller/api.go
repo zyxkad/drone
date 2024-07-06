@@ -32,13 +32,15 @@ import (
 func (s *Server) buildAPIRoute() {
 	s.route.HandleFunc("/api/ping", s.routePing)
 	s.route.HandleFunc("/api/io", s.routeIO)
-	s.route.HandleFunc("GET /api/device_ports", s.routeDevicePortsGET)
+	s.route.HandleFunc("GET /api/devices", s.routeDevicesGET)
 	s.route.HandleFunc("GET /api/lora/connect", s.routeLoraConnectGET)
 	s.route.HandleFunc("POST /api/lora/connect", s.routeLoraConnectPOST)
 	s.route.HandleFunc("DELETE /api/lora/connect", s.routeLoraConnectDELETE)
 	s.route.HandleFunc("GET /api/rtk/connect", s.routeRtkConnectGET)
 	s.route.HandleFunc("POST /api/rtk/connect", s.routeRtkConnectPOST)
 	s.route.HandleFunc("DELETE /api/rtk/connect", s.routeRtkConnectDELETE)
+	s.route.HandleFunc("GET /api/satellite/config", s.routeSatelliteConfigGET)
+	s.route.HandleFunc("POST /api/satellite/config", s.routeSatelliteConfigPOST)
 }
 
 func (s *Server) routePing(rw http.ResponseWriter, req *http.Request) {
@@ -77,11 +79,11 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (s *Server) routeDevicePortsGET(rw http.ResponseWriter, req *http.Request) {
+func (s *Server) routeDevicesGET(rw http.ResponseWriter, req *http.Request) {
 	devices, err := drone.GetPortsList()
 	if err != nil {
 		writeJson(rw, http.StatusInternalServerError, Map{
-			"error": "ReadPortsError",
+			"error":   "ReadPortsError",
 			"message": err.Error(),
 		})
 		return
@@ -106,7 +108,7 @@ func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) 
 func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request) {
 	var payload struct {
 		Device   string `json:"device"`
-		BaudRate int    `json:"baudrate"`
+		BaudRate int    `json:"baudRate"`
 	}
 	if !parseRequestBody(rw, req, &payload) {
 		return
@@ -150,14 +152,14 @@ func (s *Server) routeLoraConnectDELETE(rw http.ResponseWriter, req *http.Reques
 	s.controller = nil
 	close(s.ctrlClosed)
 	rw.WriteHeader(http.StatusNoContent)
-	return
 }
 
 type RTKCfgPayload struct {
 	Device        string  `json:"device"`
-	BaudRate      int     `json:"baudrate"`
-	MinDuration   int     `json:"minDur"`
-	AccuracyLimit float32 `json:"accLimit"`
+	BaudRate      int     `json:"baudRate"`
+	SurveyIn      bool    `json:"surveyIn"`
+	MinDuration   int     `json:"surveyInDur"`
+	AccuracyLimit float32 `json:"surveyInAcc"`
 }
 
 func (s *Server) routeRtkConnectGET(rw http.ResponseWriter, req *http.Request) {
@@ -167,13 +169,7 @@ func (s *Server) routeRtkConnectGET(rw http.ResponseWriter, req *http.Request) {
 		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
-	cfg := s.rtk.Config()
-	writeJson(rw, http.StatusOK, RTKCfgPayload{
-		Device:        cfg.Device,
-		BaudRate:      cfg.BaudRate,
-		MinDuration:   (int)((cfg.SvinMinDur + time.Second - 1) / time.Second),
-		AccuracyLimit: cfg.SvinAccLimit,
-	})
+	writeJson(rw, http.StatusOK, s.rtkCfg)
 }
 
 func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) {
@@ -190,11 +186,10 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 		})
 		return
 	}
+	s.rtkCfg = payload
 	rtk, err := drone.OpenRTK(drone.RTKConfig{
-		Device:       payload.Device,
-		BaudRate:     payload.BaudRate,
-		SvinMinDur:   time.Second * (time.Duration)(payload.MinDuration),
-		SvinAccLimit: payload.AccuracyLimit,
+		Device:   s.rtkCfg.Device,
+		BaudRate: s.rtkCfg.BaudRate,
 	})
 	if err != nil {
 		writeJson(rw, http.StatusInternalServerError, Map{
@@ -206,8 +201,9 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 	s.rtk = rtk
 	s.rtkClosed = make(chan struct{}, 0)
 	rw.WriteHeader(http.StatusNoContent)
-	go s.broadcastRTKRTCM(s.rtk, s.rtkClosed)
+	go s.processRTKConnect(s.rtk, s.rtkClosed)
 	go s.processRTKUBX(s.rtk, s.rtkClosed)
+	go s.broadcastRTKRTCM(s.rtk, s.rtkClosed)
 }
 
 func (s *Server) routeRtkConnectDELETE(rw http.ResponseWriter, req *http.Request) {
@@ -223,7 +219,22 @@ func (s *Server) routeRtkConnectDELETE(rw http.ResponseWriter, req *http.Request
 	s.rtk = nil
 	close(s.rtkClosed)
 	rw.WriteHeader(http.StatusNoContent)
-	return
+}
+
+func (s *Server) routeSatelliteConfigGET(rw http.ResponseWriter, req *http.Request) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	writeJson(rw, http.StatusOK, s.satelliteCfg)
+}
+
+func (s *Server) routeSatelliteConfigPOST(rw http.ResponseWriter, req *http.Request) {
+	var payload drone.SatelliteCfg
+	if !parseRequestBody(rw, req, &payload) {
+		return
+	}
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	s.satelliteCfg = payload
 }
 
 type Map = map[string]any

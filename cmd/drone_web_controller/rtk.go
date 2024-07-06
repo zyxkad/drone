@@ -17,22 +17,26 @@
 package main
 
 import (
+	"time"
+
 	"github.com/daedaleanai/ublox/ubx"
 
 	"github.com/zyxkad/drone"
 )
 
-func (s *Server) broadcastRTKRTCM(rtk *drone.RTK, closeSig <-chan struct{}) {
-	for {
-		select {
-		case frame := <-rtk.RTCMFrames():
-			if ctrl := s.Controller(); ctrl != nil {
-				if e := ctrl.BroadcastRTCM(frame.Serialize()); e != nil {
-					s.Log(LevelError, "Error when broadcasting RTCM:", e)
-				}
+func (s *Server) processRTKConnect(rtk *drone.RTK, closeSig <-chan struct{}) {
+	for version := range rtk.ConnectSignal() {
+		for version != rtk.StatusVersion() {
+			select {
+			case version = <-rtk.ConnectSignal():
+			default:
+				version = rtk.StatusVersion()
 			}
-		case <-closeSig:
-			return
+		}
+		if version%2 == 1 {
+			if s.rtkCfg.SurveyIn {
+				rtk.StartSurveyIn(time.Second*(time.Duration)(s.rtkCfg.MinDuration), s.rtkCfg.AccuracyLimit)
+			}
 		}
 	}
 }
@@ -57,11 +61,26 @@ func (s *Server) processRTKUBX(rtk *drone.RTK, closeSig <-chan struct{}) {
 				})
 				if msg.Valid == 1 && msg.Active == 0 {
 					s.Log(LevelError, "RTCM ready, activating ...")
-					if err := rtk.ActivateRTCM(); err != nil {
+					if err := rtk.ActivateRTCM(s.satelliteCfg); err != nil {
 						s.ToastAndLog(LevelError, "RTK Status", "Cannot activate RTCM:", err)
 					} else {
 						s.ToastAndLog(LevelInfo, "RTK Status", "RTCM activated")
 					}
+				}
+			}
+		case <-closeSig:
+			return
+		}
+	}
+}
+
+func (s *Server) broadcastRTKRTCM(rtk *drone.RTK, closeSig <-chan struct{}) {
+	for {
+		select {
+		case frame := <-rtk.RTCMFrames():
+			if ctrl := s.Controller(); ctrl != nil {
+				if e := ctrl.BroadcastRTCM(frame.Serialize()); e != nil {
+					s.Log(LevelError, "Error when broadcasting RTCM:", e)
 				}
 			}
 		case <-closeSig:

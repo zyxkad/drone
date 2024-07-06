@@ -31,8 +31,8 @@ import (
 )
 
 type Device struct {
-	Name        string
-	Description string
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 func GetPortsList() (details []*Device, err error) {
@@ -235,11 +235,11 @@ func (r *RTK) StartSurveyIn(minDur time.Duration, accLimit float32) error {
 }
 
 type SatelliteCfg struct {
-	GPS     bool
-	GLONASS bool
-	Galileo bool
-	BeiDou  bool
-	PVT     bool
+	GPS     bool `json:"GPS"`
+	GLONASS bool `json:"GLONASS"`
+	Galileo bool `json:"Galileo"`
+	BeiDou  bool `json:"BeiDou"`
+	PVT     bool `json:"PVT"`
 }
 
 var (

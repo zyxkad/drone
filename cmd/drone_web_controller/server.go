@@ -28,12 +28,14 @@ import (
 )
 
 type Server struct {
-	mux        sync.RWMutex
-	controller drone.Controller
-	ctrlClosed chan struct{}
-	rtk        *drone.RTK
-	rtkClosed  chan struct{}
-	sockets    []*aws.WebSocket
+	mux          sync.RWMutex
+	controller   drone.Controller
+	ctrlClosed   chan struct{}
+	rtk          *drone.RTK
+	rtkCfg       RTKCfgPayload
+	satelliteCfg drone.SatelliteCfg
+	rtkClosed    chan struct{}
+	sockets      []*aws.WebSocket
 
 	route    *http.ServeMux
 	upgrader *aws.Upgrader
@@ -41,6 +43,7 @@ type Server struct {
 
 func NewServer() *Server {
 	s := &Server{
+		satelliteCfg: drone.SatelliteAll,
 		route: http.NewServeMux(),
 		upgrader: &aws.Upgrader{
 			Upgrader: &websocket.Upgrader{

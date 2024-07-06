@@ -46,16 +46,28 @@ type Drone struct {
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
 
-	posType    ardupilotmega.GPS_FIX_TYPE
-	pos        *vec3.T
+	gpsType    ardupilotmega.GPS_FIX_TYPE
+	gps        *drone.Gps
 	rotate     *vec3.T
 	battery    drone.BatteryStat
 	customMode uint32
 
 	commandAcks map[common.MAV_CMD]chan<- *common.MessageCommandAck
+
+	DroneExtraInfo
 }
 
 var _ drone.Drone = (*Drone)(nil)
+
+type DroneExtraInfo struct {
+	LED ColorInfo `json:"LED"`
+}
+
+type ColorInfo struct {
+	R byte `json:"r"`
+	G byte `json:"g"`
+	B byte `json:"b"`
+}
 
 func newDrone(c *Controller, channel *gomavlib.Channel, id int) *Drone {
 	return &Drone{
@@ -74,7 +86,7 @@ func (d *Drone) String() string {
 	defer d.mux.RUnlock()
 	return fmt.Sprintf("<ardupilot.Drone id=%d gpsType=%s gps=[%s] battery=%s mode=%d>",
 		d.id,
-		d.posType.String(), d.pos,
+		d.gpsType.String(), d.gps,
 		d.battery,
 		d.customMode)
 }
@@ -90,13 +102,13 @@ func (d *Drone) Name() string {
 func (d *Drone) GetGPSType() int {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
-	return (int)(d.posType)
+	return (int)(d.gpsType)
 }
 
-func (d *Drone) GetPos() *vec3.T {
+func (d *Drone) GetGPS() *drone.Gps {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
-	return d.pos
+	return d.gps
 }
 
 func (d *Drone) GetRotate() *vec3.T {
@@ -121,6 +133,10 @@ func (d *Drone) LastActivate() time.Time {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.lastActivate
+}
+
+func (d *Drone) ExtraInfo() any {
+	return d.DroneExtraInfo
 }
 
 func (d *Drone) Ping(ctx context.Context) (*drone.Pong, error) {
@@ -185,17 +201,17 @@ func (d *Drone) handleMessage(msg message.Message) {
 			Drone: d,
 		})
 	case *ardupilotmega.MessageGpsRawInt:
-		if d.posType != msg.FixType {
-			d.posType = msg.FixType
-			d.controller.sendEvent(&drone.EventDroneStatusChanged{
-				Drone: d,
-			})
+		d.gpsType = msg.FixType
+		d.gps = &drone.Gps{
+			Lat: (float32)(msg.Lat) / 1e7,
+			Lon: (float32)(msg.Lon) / 1e7,
+			Alt: (float32)(msg.Alt) / 1e3,
 		}
-		d.pos = &vec3.T{
-			(float32)(msg.Lat) / 1e7,
-			(float32)(msg.Lon) / 1e7,
-			(float32)(msg.Alt) / 1e3,
-		}
+		d.controller.sendEvent(&drone.EventDronePositionChanged{
+			Drone: d,
+			GPSType: (int)(d.gpsType),
+			GPS: d.gps,
+		})
 	case *ardupilotmega.MessageHeartbeat:
 		if d.customMode != msg.CustomMode {
 			d.customMode = msg.CustomMode
@@ -212,6 +228,10 @@ func (d *Drone) handleMessage(msg message.Message) {
 			ch <- msg
 		}
 	}
+	d.controller.sendEvent(&drone.EventDroneMessage{
+		Drone:   d,
+		Message: msg,
+	})
 }
 
 func (d *Drone) sendCommandIntCh(
@@ -292,19 +312,7 @@ func (d *Drone) ForceArm(ctx context.Context) error {
 }
 
 func (d *Drone) arm(ctx context.Context, param2 float32) error {
-	ch, err := d.sendCommandLongCh(common.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, param2, 0, 0, 0, 0, 0)
-	if err != nil {
-		return err
-	}
-	select {
-	case ack := <-ch:
-		if ack.Result != ardupilotmega.MAV_RESULT_ACCEPTED {
-			return &MavResultError{ack.Result}
-		}
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	return nil
+	return d.armOrDisarm(ctx, 1, param2)
 }
 
 func (d *Drone) Disarm(ctx context.Context) error {
@@ -316,7 +324,11 @@ func (d *Drone) ForceDisarm(ctx context.Context) error {
 }
 
 func (d *Drone) disarm(ctx context.Context, param2 float32) error {
-	ch, err := d.sendCommandLongCh(common.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, param2, 0, 0, 0, 0, 0)
+	return d.armOrDisarm(ctx, 0, param2)
+}
+
+func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
+	ch, err := d.sendCommandLongCh(common.MAV_CMD_COMPONENT_ARM_DISARM, 0, param1, param2, 0, 0, 0, 0, 0)
 	if err != nil {
 		return err
 	}
