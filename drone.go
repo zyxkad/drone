@@ -31,6 +31,7 @@ type Drone interface {
 	Name() string
 	GetGPSType() int
 	GetGPS() *Gps
+	GetSatelliteCount() int // -1 means invalid
 	GetRotate() *vec3.T
 	GetBattery() BatteryStat
 	GetMode() int

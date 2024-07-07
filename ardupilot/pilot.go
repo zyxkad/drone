@@ -38,6 +38,7 @@ type Drone struct {
 	controller *Controller
 	channel    *gomavlib.Channel
 	id         int
+	component  byte
 
 	mux sync.RWMutex
 
@@ -48,13 +49,14 @@ type Drone struct {
 
 	gpsType ardupilotmega.GPS_FIX_TYPE
 	gps     *drone.Gps
+	satelliteCount int
 	rotate  *vec3.T
 	battery drone.BatteryStat
 	// TODO: change drone status when conditions match
 	status     drone.DroneStatus
 	customMode uint32
 
-	commandAcks map[common.MAV_CMD]chan<- *common.MessageCommandAck
+	commandAcks map[common.MAV_CMD]chan *common.MessageCommandAck
 
 	DroneExtraInfo
 }
@@ -71,16 +73,17 @@ type ColorInfo struct {
 	B byte `json:"b"`
 }
 
-func newDrone(c *Controller, channel *gomavlib.Channel, id int) *Drone {
+func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) *Drone {
 	return &Drone{
 		controller: c,
 		channel:    channel,
 		id:         id,
+		component:  component,
 		status:     drone.StatusUnstable,
 
 		activeTimeout: time.Second * 3,
 
-		commandAcks: make(map[common.MAV_CMD]chan<- *common.MessageCommandAck),
+		commandAcks: make(map[common.MAV_CMD]chan *common.MessageCommandAck),
 	}
 }
 
@@ -112,6 +115,12 @@ func (d *Drone) GetGPS() *drone.Gps {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.gps
+}
+
+func (d *Drone) GetSatelliteCount() int {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.satelliteCount
 }
 
 func (d *Drone) GetRotate() *vec3.T {
@@ -235,8 +244,9 @@ func (d *Drone) handleMessage(msg message.Message) {
 			if msg.Result != common.MAV_RESULT_IN_PROGRESS {
 				delete(d.commandAcks, msg.Command)
 			}
-			unlock()
-			ch <- msg
+			go func(){
+				ch <- msg
+			}()
 		}
 	}
 	d.controller.sendEvent(&drone.EventDroneMessage{
@@ -258,7 +268,7 @@ func (d *Drone) sendCommandIntCh(
 	}
 	if err := d.SendMessage(&ardupilotmega.MessageCommandInt{
 		TargetSystem:    (uint8)(d.id),
-		TargetComponent: 1,
+		TargetComponent: d.component,
 		Command:         cmd,
 		Frame:           frame,
 		Param1:          arg1,
@@ -286,9 +296,22 @@ func (d *Drone) sendCommandLongCh(
 	if _, ok := d.commandAcks[cmd]; ok {
 		return nil, errors.New("Command in progress")
 	}
-	if err := d.SendMessage(&ardupilotmega.MessageCommandLong{
+	if err := d.sendCommandLongMessage(cmd, confirm, arg1, arg2, arg3, arg4, arg5, arg6, arg7); err != nil {
+		return nil, err
+	}
+	ch := make(chan *common.MessageCommandAck, 1)
+	d.commandAcks[cmd] = ch
+	return ch, nil
+}
+
+func (d *Drone) sendCommandLongMessage(
+	cmd common.MAV_CMD,
+	confirm uint8,
+	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
+) error {
+	return d.SendMessage(&ardupilotmega.MessageCommandLong{
 		TargetSystem:    (uint8)(d.id),
-		TargetComponent: 1,
+		TargetComponent: d.component,
 		Command:         cmd,
 		Confirmation:    confirm,
 		Param1:          arg1,
@@ -298,12 +321,82 @@ func (d *Drone) sendCommandLongCh(
 		Param5:          arg5,
 		Param6:          arg6,
 		Param7:          arg7,
-	}); err != nil {
+	})
+}
+
+func (d *Drone) cancelCommand(cmd common.MAV_CMD) error {
+	d.mux.Lock()
+	defer d.mux.Unlock()
+	ch, ok := d.commandAcks[cmd]
+	if !ok {
+		return errors.New("Command has cancelled")
+	}
+	delete(d.commandAcks, cmd)
+	for {
+		select {
+		case <-ch:
+		default:
+			return nil
+		}
+	}
+}
+
+func (d *Drone) sendCommandLong(
+	ctx context.Context,
+	progCh chan<- *ardupilotmega.MessageCommandAck,
+	cmd common.MAV_CMD,
+	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
+) (*ardupilotmega.MessageCommandAck, error) {
+	const maxCommandPing = time.Millisecond * 200
+	const maxConfirm = 10
+
+	resCh, err := d.sendCommandLongCh(cmd, 0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+	if err != nil {
 		return nil, err
 	}
-	ch := make(chan *common.MessageCommandAck, 1)
-	d.commandAcks[cmd] = ch
-	return ch, nil
+	confirm := (uint8)(0)
+RESEND:
+	for {
+		select {
+		case msg := <-resCh:
+			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
+				if progCh != nil {
+					progCh <- msg
+				}
+				break RESEND
+			}
+			return msg, nil
+		case <-time.After(maxCommandPing):
+			confirm++
+			if err := d.sendCommandLongMessage(cmd, confirm, arg1, arg2, arg3, arg4, arg5, arg6, arg7); err != nil {
+				d.cancelCommand(cmd)
+				return nil, err
+			}
+		case <-ctx.Done():
+			d.cancelCommand(cmd)
+			return nil, ctx.Err()
+		}
+	}
+	for {
+		select {
+		case msg := <-resCh:
+			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
+				if progCh != nil {
+					select {
+					case progCh <- msg:
+					case <-ctx.Done():
+						d.cancelCommand(cmd)
+						return nil, ctx.Err()
+					}
+				}
+				continue
+			}
+			return msg, nil
+		case <-ctx.Done():
+			d.cancelCommand(cmd)
+			return nil, ctx.Err()
+		}
+	}
 }
 
 type MavResultError struct {
@@ -339,17 +432,12 @@ func (d *Drone) disarm(ctx context.Context, param2 float32) error {
 }
 
 func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
-	ch, err := d.sendCommandLongCh(common.MAV_CMD_COMPONENT_ARM_DISARM, 0, param1, param2, 0, 0, 0, 0, 0)
+	ack, err := d.sendCommandLong(ctx, nil, common.MAV_CMD_COMPONENT_ARM_DISARM, param1, param2, 0, 0, 0, 0, 0)
 	if err != nil {
 		return err
 	}
-	select {
-	case ack := <-ch:
-		if ack.Result != ardupilotmega.MAV_RESULT_ACCEPTED {
-			return &MavResultError{ack.Result}
-		}
-	case <-ctx.Done():
-		return ctx.Err()
+	if ack.Result != ardupilotmega.MAV_RESULT_ACCEPTED {
+		return &MavResultError{ack.Result}
 	}
 	return nil
 }

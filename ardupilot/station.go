@@ -192,13 +192,14 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 		}
 
 		droneId := (int)(event.SystemID())
+		compId := event.ComponentID()
 		if droneId != c.id {
 			d, ok := c.drones[droneId]
 			if !ok {
-				d = newDrone(c, event.Channel, droneId)
+				d = newDrone(c, event.Channel, droneId, compId)
 				c.drones[droneId] = d
 			}
-			if d != nil {
+			if d != nil && d.component == compId {
 				d.handleMessage(msg)
 			}
 		}

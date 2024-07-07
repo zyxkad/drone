@@ -60,18 +60,46 @@ func (s *Server) Logf(level LogLevel, format string, args ...any) {
 }
 
 type ToastMsg struct {
-	Level LogLevel `json:"level"`
-	Title string   `json:"title"`
-	Msg   string   `json:"msg"`
+	Level ToastServerity `json:"level"`
+	Title string         `json:"title"`
+	Msg   string         `json:"msg"`
+	Life  int64          `json:"life"`
+}
+
+type ToastServerity string
+
+const (
+	ToastSuccess   ToastServerity = "success"
+	ToastInfo      ToastServerity = "info"
+	ToastWarn      ToastServerity = "warn"
+	ToastError     ToastServerity = "error"
+	ToastSecondary ToastServerity = "secondary"
+	ToastContrast  ToastServerity = "contrast"
+)
+
+func toastServerityFromLogLevel(level LogLevel) ToastServerity {
+	switch level {
+	case LevelError:
+		return ToastError
+	case LevelWarn:
+		return ToastWarn
+	case LevelInfo:
+		return ToastInfo
+	case LevelDebug:
+		return ToastSecondary
+	default:
+		return ToastContrast
+	}
 }
 
 func (s *Server) ToastAndLog(level LogLevel, title string, args ...any) {
 	msg := fmt.Sprintln(args...)
 	log.Printf("%s: %s: %s", level, title, msg)
 	s.BroadcastEvent("toast", ToastMsg{
-		Level: level,
+		Level: toastServerityFromLogLevel(level),
 		Title: title,
 		Msg:   msg,
+		Life:  3000,
 	})
 }
 
@@ -79,8 +107,9 @@ func (s *Server) ToastAndLogf(level LogLevel, title string, format string, args 
 	msg := fmt.Sprintf(format, args...)
 	log.Printf("%s: %s: %s\n", level, title, msg)
 	s.BroadcastEvent("toast", ToastMsg{
-		Level: level,
+		Level: toastServerityFromLogLevel(level),
 		Title: title,
 		Msg:   msg,
+		Life:  3000,
 	})
 }

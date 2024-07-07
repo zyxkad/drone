@@ -98,7 +98,7 @@ func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
-		rw.WriteHeader(http.StatusNotFound)
+		writeJson(rw, http.StatusOK, nil)
 		return
 	}
 	writeJson(rw, http.StatusOK, Map{
@@ -167,7 +167,7 @@ func (s *Server) routeRtkConnectGET(rw http.ResponseWriter, req *http.Request) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.rtk == nil {
-		rw.WriteHeader(http.StatusNotFound)
+		writeJson(rw, http.StatusOK, nil)
 		return
 	}
 	writeJson(rw, http.StatusOK, s.rtkCfg)
