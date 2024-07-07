@@ -3,7 +3,7 @@ module github.com/zyxkad/drone
 go 1.22.0
 
 require (
-	github.com/LiterMC/go-aws v1.0.0
+	github.com/LiterMC/go-aws v1.0.1
 	github.com/bluenviron/gomavlib/v3 v3.0.0
 	github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
 	github.com/go-gnss/rtcm v0.0.6

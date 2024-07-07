@@ -46,10 +46,12 @@ type Drone struct {
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
 
-	gpsType    ardupilotmega.GPS_FIX_TYPE
-	gps        *drone.Gps
-	rotate     *vec3.T
-	battery    drone.BatteryStat
+	gpsType ardupilotmega.GPS_FIX_TYPE
+	gps     *drone.Gps
+	rotate  *vec3.T
+	battery drone.BatteryStat
+	// TODO: change drone status when conditions match
+	status     drone.DroneStatus
 	customMode uint32
 
 	commandAcks map[common.MAV_CMD]chan<- *common.MessageCommandAck
@@ -74,6 +76,7 @@ func newDrone(c *Controller, channel *gomavlib.Channel, id int) *Drone {
 		controller: c,
 		channel:    channel,
 		id:         id,
+		status:     drone.StatusUnstable,
 
 		activeTimeout: time.Second * 3,
 
@@ -121,6 +124,12 @@ func (d *Drone) GetBattery() drone.BatteryStat {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.battery
+}
+
+func (d *Drone) GetStatus() drone.DroneStatus {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.status
 }
 
 func (d *Drone) GetMode() int {
@@ -176,6 +185,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 	if d.inactiveTimer == nil {
 		d.inactiveTimer = time.AfterFunc(d.activeTimeout, func() {
 			if d.alive.CompareAndSwap(true, false) {
+				d.status = drone.StatusNone
 				d.controller.sendEvent(&drone.EventDroneDisconnected{
 					Drone: d,
 				})
@@ -186,6 +196,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.inactiveTimer.Reset(d.activeTimeout)
 	}
 	if d.alive.CompareAndSwap(false, true) {
+		d.status = drone.StatusUnstable
 		d.controller.sendEvent(&drone.EventDroneConnected{
 			Drone: d,
 		})
@@ -208,9 +219,9 @@ func (d *Drone) handleMessage(msg message.Message) {
 			Alt: (float32)(msg.Alt) / 1e3,
 		}
 		d.controller.sendEvent(&drone.EventDronePositionChanged{
-			Drone: d,
+			Drone:   d,
 			GPSType: (int)(d.gpsType),
-			GPS: d.gps,
+			GPS:     d.gps,
 		})
 	case *ardupilotmega.MessageHeartbeat:
 		if d.customMode != msg.CustomMode {

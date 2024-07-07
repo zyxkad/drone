@@ -44,7 +44,7 @@ type Server struct {
 func NewServer() *Server {
 	s := &Server{
 		satelliteCfg: drone.SatelliteAll,
-		route: http.NewServeMux(),
+		route:        http.NewServeMux(),
 		upgrader: &aws.Upgrader{
 			Upgrader: &websocket.Upgrader{
 				HandshakeTimeout: time.Second * 10,

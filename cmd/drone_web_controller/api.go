@@ -70,6 +70,7 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 		}
 		s.mux.Unlock()
 	}()
+	s.Log(LevelInfo, "New AWS connection from", req.RemoteAddr)
 	for {
 		msg, err := ws.ReadMessage()
 		if err != nil {

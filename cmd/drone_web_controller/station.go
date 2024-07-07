@@ -44,16 +44,20 @@ func (s *Server) pollStation(station drone.Controller, closeSig <-chan struct{})
 			case *drone.EventDroneStatusChanged:
 				d := event.Drone
 				type DroneInfoMsg struct {
-					Id      int               `json:"id"`
-					Mode    int               `json:"mode"`
-					Battery drone.BatteryStat `json:"battery"`
-					Extra   any               `json:"extra"`
+					Id           int               `json:"id"`
+					Status       drone.DroneStatus `json:"status"`
+					Mode         int               `json:"mode"`
+					Battery      drone.BatteryStat `json:"battery"`
+					LastActivate int64             `json:"lastActivate"`
+					Extra        any               `json:"extra"`
 				}
 				s.BroadcastEvent("drone-info", &DroneInfoMsg{
-					Id:      d.ID(),
-					Mode:    d.GetMode(),
-					Battery: d.GetBattery(),
-					Extra:   d.ExtraInfo(),
+					Id:           d.ID(),
+					Status:       d.GetStatus(),
+					Mode:         d.GetMode(),
+					Battery:      d.GetBattery(),
+					LastActivate: d.LastActivate().UnixMilli(),
+					Extra:        d.ExtraInfo(),
 				})
 			case *drone.EventDronePositionChanged:
 				d := event.Drone

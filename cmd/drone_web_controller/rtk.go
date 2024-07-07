@@ -60,7 +60,7 @@ func (s *Server) processRTKUBX(rtk *drone.RTK, closeSig <-chan struct{}) {
 					Active: msg.Active == 1,
 				})
 				if msg.Valid == 1 && msg.Active == 0 {
-					s.Log(LevelError, "RTCM ready, activating ...")
+					s.Log(LevelWarn, "RTCM ready, activating ...")
 					if err := rtk.ActivateRTCM(s.satelliteCfg); err != nil {
 						s.ToastAndLog(LevelError, "RTK Status", "Cannot activate RTCM:", err)
 					} else {

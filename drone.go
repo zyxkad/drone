@@ -34,6 +34,7 @@ type Drone interface {
 	GetRotate() *vec3.T
 	GetBattery() BatteryStat
 	GetMode() int
+	GetStatus() DroneStatus
 	LastActivate() time.Time
 	ExtraInfo() any
 
@@ -56,6 +57,18 @@ type BatteryStat struct {
 func (s BatteryStat) String() string {
 	return fmt.Sprintf("{%.03fV %.03fA %.1f%%}", s.Voltage, s.Current, s.Remaining*100)
 }
+
+type DroneStatus string
+
+const (
+	StatusNone     DroneStatus = "N/A"
+	StatusUnstable DroneStatus = "UNSTABLE"
+	StatusReady    DroneStatus = "READY"
+	StatusSleeping DroneStatus = "SLEEPING"
+	StatusArmed    DroneStatus = "ARMED"
+	StatusTakenoff DroneStatus = "TAKENOFF"
+	StatusError    DroneStatus = "ERROR"
+)
 
 type Pong struct {
 	Duration time.Duration

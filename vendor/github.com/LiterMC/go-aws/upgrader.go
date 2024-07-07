@@ -78,6 +78,7 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 			w.Close()
 			return nil, err
 		}
+		w.Flush()
 		authTimeout := u.AuthTimeout
 		if authTimeout <= 0 {
 			authTimeout = time.Second * 10
@@ -100,5 +101,6 @@ func (u *Upgrader) Upgrade(rw http.ResponseWriter, req *http.Request, respHeader
 		w.Close()
 		return nil, err
 	}
+	w.Flush()
 	return w, nil
 }

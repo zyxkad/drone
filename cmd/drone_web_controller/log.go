@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 )
 
 type LogLevel string
@@ -30,14 +31,32 @@ const (
 	LevelDebug LogLevel = "DBUG"
 )
 
+type LogMsg struct {
+	Time    int64    `json:"time"`
+	Level   LogLevel `json:"lvl"`
+	Message string   `json:"msg"`
+}
+
 func (s *Server) Log(level LogLevel, args ...any) {
+	now := time.Now()
 	msg := fmt.Sprintln(args...)
 	log.Printf("%s: %s", level, msg)
+	s.BroadcastEvent("log", LogMsg{
+		Time:    now.UnixMilli(),
+		Level:   level,
+		Message: msg,
+	})
 }
 
 func (s *Server) Logf(level LogLevel, format string, args ...any) {
+	now := time.Now()
 	msg := fmt.Sprintf(format, args...)
 	log.Printf("%s: %s\n", level, msg)
+	s.BroadcastEvent("log", LogMsg{
+		Time:    now.UnixMilli(),
+		Level:   level,
+		Message: msg,
+	})
 }
 
 type ToastMsg struct {

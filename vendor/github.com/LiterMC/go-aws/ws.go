@@ -296,28 +296,24 @@ MSG_LOOP:
 			if enableBatch {
 				minTimer := time.NewTimer(minTimeout)
 				maxTimer := time.NewTimer(maxTimeout)
-			BATCH_LOOP:
 				for {
 					select {
-					case msg, ok := <-w.writeCh:
-						if !ok {
-							break BATCH_LOOP
-						}
+					case msg := <-w.writeCh:
 						if !minTimer.Stop() {
 							<-minTimer.C
 						}
 						minTimer.Reset(minTimeout)
 						if err := e.Encode(msg); err != nil {
-							continue
+							continue MSG_LOOP
 						}
-						continue MSG_LOOP
+						continue
 					case <-w.flushSignal:
-						break BATCH_LOOP
 					case <-minTimer.C:
-						break BATCH_LOOP
 					case <-maxTimer.C:
-						break BATCH_LOOP
+					case <-w.ctx.Done():
+						return
 					}
+					break
 				}
 				maxTimer.Stop()
 			}
