@@ -19,6 +19,8 @@ package drone
 import (
 	"fmt"
 	"math"
+
+	"github.com/ungerik/go3d/vec3"
 )
 
 const earthRadius = 6.371e6 // in meters
@@ -29,35 +31,63 @@ type Gps struct {
 	Alt float32 `json:"alt"` // Altitude in meters
 }
 
+func GPSFromPos(v *vec3.T) *Gps {
+	const baseRadius = earthRadius
+	alt := v.Length()
+	if alt == 0 {
+		return &Gps{
+			Lat: 0,
+			Lon: 0,
+			Alt: -baseRadius,
+		}
+	}
+	w := v.Normalized()
+	lat := (float32)(math.Asin((float64)(w[1])))
+	lon := (float32)(math.Atan2((float64)(w[2]), (float64)(w[0])))
+	return &Gps{
+		Lat: lat * 180 / math.Pi,
+		Lon: lon * 180 / math.Pi,
+		Alt: alt - baseRadius,
+	}
+}
+
 func (g *Gps) String() string {
 	return fmt.Sprintf("Gps{ Lat: %.6f, Lon: %.6f, Alt: %.4fm }", g.Lat, g.Lon, g.Alt)
 }
 
-// // ToRelPos convert a gps position to a relative vec3 position
-// func (g *Gps) ToRelPos(other *Gps) *vec3.T {
-// 	return
-// }
-
-// DistanceTo returns the curved distance between two positions
-// The radius is the Earth's radius
-func (g *Gps) DistanceTo(other *Gps) float32 {
-	return g.DistanceToWithRadius(other, earthRadius)
+// ToPos convert a gps position to a relative vec3 position to the center of the Earth
+func (g *Gps) ToPos() *vec3.T {
+	return g.ToPosWithRadius(earthRadius)
 }
 
-// DistanceTo returns the curved distance between two positions
-// The radius is the length (in meters) between the core of the planet and the radius of standard (zero) altitude
-func (g *Gps) DistanceToWithRadius(other *Gps, radius float32) float32 {
-	minAlt, maxAlt := min(g.Alt, other.Alt), max(g.Alt, other.Alt)
-	// TODO: don't think the midAlt is not the correct logic
-	const (
-		p = 0.618033988749895
-		q = 1 - p
-	)
-	midAlt := minAlt*p + maxAlt*q
-	base := math.Acos(
-		math.Sin((float64)(g.Lat*math.Pi/180))*math.Sin((float64)(other.Lat*math.Pi/180))+
-			math.Cos((float64)(g.Lat*math.Pi/180))*math.Cos((float64)(other.Lat*math.Pi/180))*math.Cos((float64)((g.Lon-other.Lon)*math.Pi/180)),
-	) * (float64)(radius+midAlt)
-	high := (float64)(g.Alt - other.Alt)
-	return (float32)(math.Sqrt(base*base + high*high))
+// ToPosWithRadius convert a gps position to a relative vec3 position to the center of the planet
+func (g *Gps) ToPosWithRadius(radius float32) *vec3.T {
+	r := (float64)(radius) + (float64)(g.Alt)
+	lat, lon := (float64)(g.Lat)*math.Pi/180, (float64)(g.Lon)*math.Pi/180
+	lr := r * math.Cos(lat)
+	y := (float32)(r * math.Sin(lat))
+	x := (float32)(lr * math.Cos(lon))
+	z := (float32)(lr * math.Sin(lon))
+	return &vec3.T{x, y, z}
+}
+
+// LatUnit returns the distance changed as the latitude increased 1 while the altitude keeps the same
+func (g *Gps) LatUnit() float32 {
+	return g.LatUnitWithRadius(earthRadius)
+}
+
+func (g *Gps) LatUnitWithRadius(radius float32) float32 {
+	return (radius + g.Alt) * math.Pi / 180
+}
+
+// LonUnit returns the distance changed as the longitude increased 1 while the altitude keeps the same
+func (g *Gps) LonUnit() float32 {
+	return g.LonUnitWithRadius(earthRadius)
+}
+
+func (g *Gps) LonUnitWithRadius(radius float32) float32 {
+	r := radius + g.Alt
+	lat := (float64)(g.Lat) * math.Pi / 180
+	lr := r * (float32)(math.Cos(lat))
+	return lr * math.Pi / 180
 }

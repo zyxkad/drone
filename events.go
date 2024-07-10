@@ -80,6 +80,7 @@ func (e *EventDronePositionChanged) String() string {
 type EventDroneMessage struct {
 	Drone   Drone
 	Message any
+	RawData any
 }
 
 func (*EventDroneMessage) GetType() string {

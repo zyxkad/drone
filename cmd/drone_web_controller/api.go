@@ -71,12 +71,13 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 		s.mux.Unlock()
 	}()
 	s.Log(LevelInfo, "New AWS connection from", req.RemoteAddr)
+	go s.sendDroneList(ws)
 	for {
 		msg, err := ws.ReadMessage()
 		if err != nil {
 			return
 		}
-		_ = msg
+		s.onWsMessage(ws, msg)
 	}
 }
 
@@ -96,13 +97,17 @@ func (s *Server) routeDevicesGET(rw http.ResponseWriter, req *http.Request) {
 
 func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) {
 	s.mux.Lock()
-	defer s.mux.Unlock()
-	if s.controller == nil {
+	var endpoints []*drone.Endpoint
+	if s.controller != nil {
+		endpoints = s.controller.Endpoints()
+	}
+	s.mux.Unlock()
+	if len(endpoints) == 0 {
 		writeJson(rw, http.StatusOK, nil)
 		return
 	}
 	writeJson(rw, http.StatusOK, Map{
-		"endpoints": s.controller.Endpoints(),
+		"endpoints": endpoints,
 	})
 }
 
@@ -135,8 +140,9 @@ func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 	s.controller = controller
-	s.ctrlClosed = make(chan struct{}, 0)
-	go s.pollStation(s.controller, s.ctrlClosed)
+	eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
+	go s.forwardStation(s.controller, eventCh[0])
+	go s.pollStation(s.controller, eventCh[1])
 	rw.WriteHeader(http.StatusNoContent)
 }
 
@@ -151,7 +157,6 @@ func (s *Server) routeLoraConnectDELETE(rw http.ResponseWriter, req *http.Reques
 	}
 	s.controller.Close()
 	s.controller = nil
-	close(s.ctrlClosed)
 	rw.WriteHeader(http.StatusNoContent)
 }
 
@@ -201,6 +206,9 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 	}
 	s.rtk = rtk
 	s.rtkClosed = make(chan struct{}, 0)
+	if payload.SurveyIn {
+		s.rtkStatus = RtkSurveyIn
+	}
 	rw.WriteHeader(http.StatusNoContent)
 	go s.processRTKConnect(s.rtk, s.rtkClosed)
 	go s.processRTKUBX(s.rtk, s.rtkClosed)

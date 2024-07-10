@@ -16,6 +16,17 @@
 
 package main
 
+import (
+	"github.com/LiterMC/go-aws"
+)
+
+func (s *Server) onWsMessage(ws *aws.WebSocket, msg *aws.Message) {
+	switch msg.Type {
+	case "drone-list-req":
+		s.sendDroneList(ws)
+	}
+}
+
 func (s *Server) BroadcastEvent(event string, data any) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()

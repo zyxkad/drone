@@ -17,15 +17,81 @@
 package main
 
 import (
+	"github.com/LiterMC/go-aws"
 	"github.com/ungerik/go3d/vec3"
 
 	"github.com/zyxkad/drone"
+	"github.com/zyxkad/drone/cvt2udp"
 )
 
-func (s *Server) pollStation(station drone.Controller, closeSig <-chan struct{}) {
+type DroneStatusMsg struct {
+	Id           int               `json:"id"`
+	Status       drone.DroneStatus `json:"status"`
+	Mode         int               `json:"mode"`
+	Battery      drone.BatteryStat `json:"battery"`
+	LastActivate int64             `json:"lastActivate"`
+	Extra        any               `json:"extra"`
+}
+
+type DronePositionMsg struct {
+	Id      int        `json:"id"`
+	GPSType int        `json:"gpsType"`
+	GPS     *drone.Gps `json:"gps"`
+	Rotate  *vec3.T    `json:"rotate"`
+}
+
+func (s *Server) sendDroneList(ws *aws.WebSocket) error {
+	type DroneInfo struct {
+		Id           int               `json:"id"`
+		Status       drone.DroneStatus `json:"status"`
+		Mode         int               `json:"mode"`
+		Battery      drone.BatteryStat `json:"battery"`
+		LastActivate int64             `json:"lastActivate"`
+		Extra        any               `json:"extra"`
+		GPSType      int               `json:"gpsType"`
+		GPS          *drone.Gps        `json:"gps"`
+		Rotate       *vec3.T           `json:"rotate"`
+	}
+	s.mux.RLock()
+	controller := s.controller
+	s.mux.RUnlock()
+	if controller == nil {
+		return nil
+	}
+	drones := controller.Drones()
+	droneList := make([]*DroneInfo, len(drones))
+	for i, d := range drones {
+		droneList[i] = &DroneInfo{
+			Id:           d.ID(),
+			Status:       d.GetStatus(),
+			Mode:         d.GetMode(),
+			Battery:      d.GetBattery(),
+			LastActivate: d.LastActivate().UnixMilli(),
+			Extra:        d.ExtraInfo(),
+			GPSType:      d.GetGPSType(),
+			GPS:          d.GetGPS(),
+			Rotate:       d.GetRotate(),
+		}
+	}
+	return ws.WriteMessage("drone-list", droneList)
+}
+
+func (s *Server) forwardStation(station drone.Controller, eventCh <-chan drone.Event) {
+	addr := "127.0.0.1:14550"
+	server, err := cvt2udp.NewServer(addr)
+	if err != nil {
+		s.Log(LevelError, "Cannot setup udp server:", err)
+		return
+	}
+	defer server.Close()
+	s.Log(LevelInfo, "UDP listening at", addr)
+	server.RunForward(station, eventCh)
+}
+
+func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Event) {
 	for {
 		select {
-		case event := <-station.Events():
+		case event := <-eventCh:
 			switch event := event.(type) {
 			case *drone.EventChannelOpen:
 				s.BroadcastEvent("channel-open", event.Channel)
@@ -43,15 +109,7 @@ func (s *Server) pollStation(station drone.Controller, closeSig <-chan struct{})
 				s.Log(LevelWarn, "Drone", d.ID(), "disconnected")
 			case *drone.EventDroneStatusChanged:
 				d := event.Drone
-				type DroneInfoMsg struct {
-					Id           int               `json:"id"`
-					Status       drone.DroneStatus `json:"status"`
-					Mode         int               `json:"mode"`
-					Battery      drone.BatteryStat `json:"battery"`
-					LastActivate int64             `json:"lastActivate"`
-					Extra        any               `json:"extra"`
-				}
-				s.BroadcastEvent("drone-info", &DroneInfoMsg{
+				s.BroadcastEvent("drone-info", &DroneStatusMsg{
 					Id:           d.ID(),
 					Status:       d.GetStatus(),
 					Mode:         d.GetMode(),
@@ -61,20 +119,14 @@ func (s *Server) pollStation(station drone.Controller, closeSig <-chan struct{})
 				})
 			case *drone.EventDronePositionChanged:
 				d := event.Drone
-				type DroneInfoMsg struct {
-					Id      int        `json:"id"`
-					GPSType int        `json:"gpsType"`
-					GPS     *drone.Gps `json:"gps"`
-					Rotate  *vec3.T    `json:"rotate"`
-				}
-				s.BroadcastEvent("drone-pos-info", &DroneInfoMsg{
+				s.BroadcastEvent("drone-pos-info", &DronePositionMsg{
 					Id:      d.ID(),
 					GPSType: event.GPSType,
 					GPS:     event.GPS,
 					Rotate:  event.Rotate,
 				})
 			}
-		case <-closeSig:
+		case <-station.Context().Done():
 			return
 		}
 	}

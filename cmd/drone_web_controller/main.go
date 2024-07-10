@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	addr string = "localhost:5001"
+	addr string = "localhost:5050"
 )
 
 func parseFlags() {
@@ -42,5 +42,8 @@ func main() {
 	fmt.Print(LICENSE_SHORT)
 	server := NewServer()
 	log.Println("Server start at", "http://"+addr)
-	http.ListenAndServe(addr, server.Handler())
+	err := http.ListenAndServe(addr, server.Handler())
+	if err != nil {
+		log.Println("Serve error:", err)
+	}
 }

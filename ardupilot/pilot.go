@@ -47,11 +47,11 @@ type Drone struct {
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
 
-	gpsType ardupilotmega.GPS_FIX_TYPE
-	gps     *drone.Gps
+	gpsType        ardupilotmega.GPS_FIX_TYPE
+	gps            *drone.Gps
 	satelliteCount int
-	rotate  *vec3.T
-	battery drone.BatteryStat
+	rotate         *vec3.T
+	battery        drone.BatteryStat
 	// TODO: change drone status when conditions match
 	status     drone.DroneStatus
 	customMode uint32
@@ -244,15 +244,11 @@ func (d *Drone) handleMessage(msg message.Message) {
 			if msg.Result != common.MAV_RESULT_IN_PROGRESS {
 				delete(d.commandAcks, msg.Command)
 			}
-			go func(){
+			go func() {
 				ch <- msg
 			}()
 		}
 	}
-	d.controller.sendEvent(&drone.EventDroneMessage{
-		Drone:   d,
-		Message: msg,
-	})
 }
 
 func (d *Drone) sendCommandIntCh(

@@ -14,19 +14,32 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
 import (
 	"context"
 )
 
-type Controller interface {
-	Close() error
-	Context() context.Context
-	Endpoints() []*Endpoint
-	Drones() []Drone
-	GetDrone(id int) Drone
-	Events() <-chan Event
-	Broadcast(msg any) error
-	BroadcastRTCM(buf []byte) error
+func dupChannel[T any](ctx context.Context, src <-chan T, n int) []chan T {
+	chans := make([]chan T, n)
+	for i := range n {
+		chans[i] = make(chan T, cap(src))
+	}
+	go func() {
+		for {
+			select {
+			case v := <-src:
+				for _, ch := range chans {
+					select {
+					case ch <- v:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return chans
 }

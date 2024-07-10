@@ -17,11 +17,15 @@
 package ardupilot
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3"
+	"github.com/bluenviron/gomavlib/v3/pkg/dialect"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
@@ -31,11 +35,15 @@ import (
 
 type Controller struct {
 	node      *gomavlib.Node
-	endpoints []gomavlib.EndpointConf
+	nodeClose func()
+	endpoints []*drone.Endpoint
+	dialectRW *dialect.ReadWriter
 	id        int
+	mux       sync.RWMutex
 	drones    map[int]*Drone
 	events    chan drone.Event
-	closedCh  chan struct{}
+	ctx       context.Context
+	cancel    context.CancelCauseFunc
 
 	rtcmSeqCount atomic.Uint32
 }
@@ -43,13 +51,18 @@ type Controller struct {
 var _ drone.Controller = (*Controller)(nil)
 
 func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
-	const STATION_ID = 0xff
+	const STATION_ID = 0xfe
+	targetDialect := ardupilotmega.Dialect
+	dialectRW, err := dialect.NewReadWriter(targetDialect)
+	if err != nil {
+		return nil, err
+	}
 	node, err := gomavlib.NewNode(gomavlib.NodeConf{
 		Endpoints:       endpoints,
-		Dialect:         ardupilotmega.Dialect,
+		Dialect:         targetDialect,
 		OutVersion:      gomavlib.V2,
 		OutSystemID:     STATION_ID,
-		HeartbeatPeriod: time.Millisecond * 2500,
+		HeartbeatPeriod: time.Millisecond * 500,
 		ReadTimeout:     time.Second * 5,
 		WriteTimeout:    time.Second * 3,
 		IdleTimeout:     time.Second * 15,
@@ -58,30 +71,36 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 		return nil, err
 	}
 	c := &Controller{
-		node:     node,
-		id:       STATION_ID,
-		drones:   make(map[int]*Drone),
-		events:   make(chan drone.Event, 8),
-		closedCh: make(chan struct{}, 0),
+		node:      node,
+		nodeClose: sync.OnceFunc(node.Close), // need sync.OnceFunc because node.Close internally close a channel
+		endpoints: mavlib2DroneEndpoints(endpoints),
+		dialectRW: dialectRW,
+		id:        STATION_ID,
+		drones:    make(map[int]*Drone),
+		events:    make(chan drone.Event, 8),
 	}
+	c.ctx, c.cancel = context.WithCancelCause(context.Background())
 	go c.handleEvents()
 	return c, nil
 }
 
 func (c *Controller) Close() error {
-	c.node.Close()
+	c.cancel(nil)
+	c.nodeClose()
 	return nil
 }
 
-func (c *Controller) Endpoints() []any {
-	endpoints := make([]any, len(c.endpoints))
-	for i, e := range c.endpoints {
-		endpoints[i] = e
-	}
-	return endpoints
+func (c *Controller) Context() context.Context {
+	return c.ctx
+}
+
+func (c *Controller) Endpoints() []*drone.Endpoint {
+	return c.endpoints
 }
 
 func (c *Controller) Drones() (drones []drone.Drone) {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	drones = make([]drone.Drone, 0, len(c.drones))
 	for _, d := range c.drones {
 		drones = append(drones, d)
@@ -90,6 +109,8 @@ func (c *Controller) Drones() (drones []drone.Drone) {
 }
 
 func (c *Controller) GetDrone(id int) drone.Drone {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 	d, _ := c.drones[id]
 	return d
 }
@@ -104,6 +125,18 @@ func (c *Controller) Broadcast(msg any) error {
 		return c.node.WriteFrameAll(msg)
 	case message.Message:
 		return c.node.WriteMessageAll(msg)
+	case []byte:
+		fr, err := frame.NewReader(frame.ReaderConf{
+			Reader: bytes.NewReader(msg),
+		})
+		if err != nil {
+			return err
+		}
+		f, err := fr.Read()
+		if err != nil {
+			return err
+		}
+		return c.node.WriteFrameAll(f)
 	}
 	panic(fmt.Errorf("Unexpected message type %T", msg))
 }
@@ -152,18 +185,18 @@ func (c *Controller) BroadcastRTCM(buf []byte) error {
 func (c *Controller) sendEvent(e drone.Event) {
 	select {
 	case c.events <- e:
-	case <-c.closedCh:
+	case <-c.ctx.Done():
 	}
 }
 
 func (c *Controller) handleEvents() {
-	defer c.node.Close()
+	defer c.Close()
 	events := c.node.Events()
 	for {
 		select {
 		case event := <-events:
 			c.handleEvent(event)
-		case <-c.closedCh:
+		case <-c.ctx.Done():
 			return
 		}
 	}
@@ -194,14 +227,44 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 		droneId := (int)(event.SystemID())
 		compId := event.ComponentID()
 		if droneId != c.id {
+			c.mux.RLock()
 			d, ok := c.drones[droneId]
+			c.mux.RUnlock()
 			if !ok {
-				d = newDrone(c, event.Channel, droneId, compId)
-				c.drones[droneId] = d
+				c.mux.Lock()
+				if d, ok = c.drones[droneId]; !ok {
+					d = newDrone(c, event.Channel, droneId, compId)
+					c.drones[droneId] = d
+				}
+				c.mux.Unlock()
 			}
-			if d != nil && d.component == compId {
+			if d.component == compId {
 				d.handleMessage(msg)
+				c.sendEvent(&drone.EventDroneMessage{
+					Drone:   d,
+					Message: msg,
+					RawData: event.Frame,
+				})
 			}
 		}
 	}
+}
+
+func mavlib2DroneEndpoints(endpoints []gomavlib.EndpointConf) []*drone.Endpoint {
+	eps := make([]*drone.Endpoint, len(endpoints))
+	for i, e := range endpoints {
+		var d drone.EndpointI
+		switch c := e.(type) {
+		case *gomavlib.EndpointSerial:
+			d = &drone.EndpointSerial{
+				Device:   c.Device,
+				BaudRate: c.Baud,
+			}
+		}
+		eps[i] = &drone.Endpoint{
+			Raw:  e,
+			Data: d,
+		}
+	}
+	return eps
 }

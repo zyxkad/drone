@@ -85,17 +85,6 @@ func main() {
 							select {
 							case <-time.After(time.Second):
 								count++
-								if count == 5 {
-									go func(){
-										fmt.Println("Changing rate")
-										dr := d.(*ardupilot.Drone)
-										ch, err := dr.SendCommandLongCh(common.MAV_CMD_SET_MESSAGE_INTERVAL, 0, (float32)((*common.MessageGpsRtk)(nil).GetID()), 1e5, 1, 0, 0, 0, 0)
-										if err != nil {
-											panic(err)
-										}
-										fmt.Println("result:", <-ch)
-									}()
-								}
 							case <-ch:
 								return
 							}
