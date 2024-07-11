@@ -39,6 +39,7 @@ type Drone struct {
 	channel    *gomavlib.Channel
 	id         int
 	component  byte
+	bootTime   time.Time
 
 	mux sync.RWMutex
 
@@ -47,7 +48,7 @@ type Drone struct {
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
 
-	gpsType        ardupilotmega.GPS_FIX_TYPE
+	gpsType        common.GPS_FIX_TYPE
 	gps            *drone.Gps
 	satelliteCount int
 	rotate         *vec3.T
@@ -56,7 +57,12 @@ type Drone struct {
 	status     drone.DroneStatus
 	customMode uint32
 
-	commandAcks map[common.MAV_CMD]chan *common.MessageCommandAck
+	pingAck              chan *common.MessageSystemTime
+	commandAcks          map[common.MAV_CMD]chan *common.MessageCommandAck
+	missionAck           atomic.Pointer[common.MessageMissionAck]
+	missionAckSignal     chan struct{}
+	missionReached       atomic.Int32
+	missionReachedSignal chan int32
 
 	DroneExtraInfo
 }
@@ -74,7 +80,7 @@ type ColorInfo struct {
 }
 
 func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) *Drone {
-	return &Drone{
+	d := &Drone{
 		controller: c,
 		channel:    channel,
 		id:         id,
@@ -83,8 +89,13 @@ func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) 
 
 		activeTimeout: time.Second * 3,
 
-		commandAcks: make(map[common.MAV_CMD]chan *common.MessageCommandAck),
+		pingAck:              make(chan *common.MessageSystemTime, 1),
+		commandAcks:          make(map[common.MAV_CMD]chan *common.MessageCommandAck),
+		missionAckSignal:     make(chan struct{}),
+		missionReachedSignal: make(chan int32),
 	}
+	d.missionReached.Store(-1)
+	return d
 }
 
 func (d *Drone) String() string {
@@ -158,7 +169,24 @@ func (d *Drone) ExtraInfo() any {
 }
 
 func (d *Drone) Ping(ctx context.Context) (*drone.Pong, error) {
-	return nil, nil
+	start := time.Now()
+	if err := d.WriteMessage(&common.MessageSystemTime{
+		TimeUnixUsec: (uint64)(start.UnixMicro()),
+		TimeBootMs:   (uint32)(start.Sub(d.controller.BootTime()).Milliseconds()),
+	}); err != nil {
+		return nil, err
+	}
+	select {
+	case ack := <-d.pingAck:
+		respondTime := time.UnixMicro((int64)(ack.TimeUnixUsec))
+		return &drone.Pong{
+			Duration:    time.Since(start),
+			RespondTime: respondTime,
+			BootTime:    respondTime.Add(-(time.Duration)(ack.TimeBootMs) * time.Millisecond),
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (d *Drone) WriteFrame(msg frame.Frame) error {
@@ -212,11 +240,23 @@ func (d *Drone) handleMessage(msg message.Message) {
 	}
 	switch msg := msg.(type) {
 	case *ardupilotmega.MessageSysStatus:
-		d.battery = drone.BatteryStat{
-			Voltage:   (float32)(msg.VoltageBattery) / 1000,
-			Current:   (float32)(msg.CurrentBattery) / 1000,
-			Remaining: (float32)(msg.BatteryRemaining) / 100,
+		var batteryStat drone.BatteryStat
+		if msg.VoltageBattery == ^(uint16)(0) {
+			batteryStat.Voltage = -1
+		} else {
+			batteryStat.Voltage = (float32)(msg.VoltageBattery) / 1000
 		}
+		if msg.CurrentBattery == -1 {
+			batteryStat.Current = -1
+		} else {
+			batteryStat.Current = (float32)(msg.CurrentBattery) / 1000
+		}
+		if msg.BatteryRemaining == -1 {
+			batteryStat.Remaining = -1
+		} else {
+			batteryStat.Remaining = (float32)(msg.BatteryRemaining) / 100
+		}
+		d.battery = batteryStat
 		d.controller.sendEvent(&drone.EventDroneStatusChanged{
 			Drone: d,
 		})
@@ -239,6 +279,11 @@ func (d *Drone) handleMessage(msg message.Message) {
 				Drone: d,
 			})
 		}
+	case *common.MessageSystemTime:
+		select {
+		case d.pingAck <- msg:
+		default:
+		}
 	case *common.MessageCommandAck:
 		if ch, ok := d.commandAcks[msg.Command]; ok {
 			if msg.Result != common.MAV_RESULT_IN_PROGRESS {
@@ -248,21 +293,46 @@ func (d *Drone) handleMessage(msg message.Message) {
 				ch <- msg
 			}()
 		}
+	case *common.MessageMissionAck:
+		d.missionAck.Store(msg)
+		go func() {
+		NOTIFY_LOOP:
+			for {
+				select {
+				case d.missionAckSignal <- struct{}{}:
+				default:
+					break NOTIFY_LOOP
+				}
+			}
+		}()
+	case *common.MessageMissionItemReached:
+		seq := (int32)(msg.Seq)
+		d.missionReached.Store(seq)
+		go func() {
+		NOTIFY_LOOP:
+			for {
+				select {
+				case d.missionReachedSignal <- seq:
+				default:
+					break NOTIFY_LOOP
+				}
+			}
+		}()
 	}
 }
 
 func (d *Drone) sendCommandIntCh(
-	frame ardupilotmega.MAV_FRAME,
+	frame common.MAV_FRAME,
 	cmd common.MAV_CMD,
 	arg1, arg2, arg3, arg4 float32,
 	x, y int32, z float32,
-) (<-chan *ardupilotmega.MessageCommandAck, error) {
+) (<-chan *common.MessageCommandAck, error) {
 	d.mux.Lock()
 	defer d.mux.Unlock()
 	if _, ok := d.commandAcks[cmd]; ok {
 		return nil, errors.New("Command in progress")
 	}
-	if err := d.SendMessage(&ardupilotmega.MessageCommandInt{
+	if err := d.SendMessage(&common.MessageCommandInt{
 		TargetSystem:    (uint8)(d.id),
 		TargetComponent: d.component,
 		Command:         cmd,
@@ -277,7 +347,7 @@ func (d *Drone) sendCommandIntCh(
 	}); err != nil {
 		return nil, err
 	}
-	ch := make(chan *ardupilotmega.MessageCommandAck, 1)
+	ch := make(chan *common.MessageCommandAck, 1)
 	d.commandAcks[cmd] = ch
 	return ch, nil
 }
@@ -286,7 +356,7 @@ func (d *Drone) sendCommandLongCh(
 	cmd common.MAV_CMD,
 	confirm uint8,
 	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) (<-chan *ardupilotmega.MessageCommandAck, error) {
+) (<-chan *common.MessageCommandAck, error) {
 	d.mux.Lock()
 	defer d.mux.Unlock()
 	if _, ok := d.commandAcks[cmd]; ok {
@@ -305,7 +375,7 @@ func (d *Drone) sendCommandLongMessage(
 	confirm uint8,
 	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
 ) error {
-	return d.SendMessage(&ardupilotmega.MessageCommandLong{
+	return d.SendMessage(&common.MessageCommandLong{
 		TargetSystem:    (uint8)(d.id),
 		TargetComponent: d.component,
 		Command:         cmd,
@@ -337,12 +407,32 @@ func (d *Drone) cancelCommand(cmd common.MAV_CMD) error {
 	}
 }
 
-func (d *Drone) sendCommandLong(
+func (d *Drone) SendCommandInt(
 	ctx context.Context,
-	progCh chan<- *ardupilotmega.MessageCommandAck,
+	frame common.MAV_FRAME,
+	cmd common.MAV_CMD,
+	arg1, arg2, arg3, arg4 float32,
+	x, y int32, z float32,
+) (*common.MessageCommandAck, error) {
+	resCh, err := d.sendCommandIntCh(frame, cmd, arg1, arg2, arg3, arg4, x, y, z)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case msg := <-resCh:
+		return msg, nil
+	case <-ctx.Done():
+		d.cancelCommand(cmd)
+		return nil, ctx.Err()
+	}
+}
+
+func (d *Drone) SendCommandLong(
+	ctx context.Context,
+	progCh chan<- *common.MessageCommandAck,
 	cmd common.MAV_CMD,
 	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) (*ardupilotmega.MessageCommandAck, error) {
+) (*common.MessageCommandAck, error) {
 	const maxCommandPing = time.Millisecond * 200
 	const maxConfirm = 10
 
@@ -395,12 +485,37 @@ RESEND:
 	}
 }
 
-type MavResultError struct {
-	Result ardupilotmega.MAV_RESULT
+func (d *Drone) SendCommandIntOrError(
+	ctx context.Context,
+	frame common.MAV_FRAME,
+	cmd common.MAV_CMD,
+	arg1, arg2, arg3, arg4 float32,
+	x, y int32, z float32,
+) error {
+	ack, err := d.SendCommandInt(ctx, frame, cmd, arg1, arg2, arg3, arg4, x, y, z)
+	if err != nil {
+		return err
+	}
+	if ack.Result != common.MAV_RESULT_ACCEPTED {
+		return &MavResultError{ack.Result}
+	}
+	return nil
 }
 
-func (e *MavResultError) Error() string {
-	return fmt.Sprintf("MAV_RESULT: %s", e.Result.String())
+func (d *Drone) SendCommandLongOrError(
+	ctx context.Context,
+	progCh chan<- *common.MessageCommandAck,
+	cmd common.MAV_CMD,
+	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
+) error {
+	ack, err := d.SendCommandLong(ctx, progCh, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+	if err != nil {
+		return err
+	}
+	if ack.Result != common.MAV_RESULT_ACCEPTED {
+		return &MavResultError{ack.Result}
+	}
+	return nil
 }
 
 func (d *Drone) Arm(ctx context.Context) error {
@@ -428,14 +543,7 @@ func (d *Drone) disarm(ctx context.Context, param2 float32) error {
 }
 
 func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
-	ack, err := d.sendCommandLong(ctx, nil, common.MAV_CMD_COMPONENT_ARM_DISARM, param1, param2, 0, 0, 0, 0, 0)
-	if err != nil {
-		return err
-	}
-	if ack.Result != ardupilotmega.MAV_RESULT_ACCEPTED {
-		return &MavResultError{ack.Result}
-	}
-	return nil
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_COMPONENT_ARM_DISARM, param1, param2, 0, 0, 0, 0, 0)
 }
 
 func (d *Drone) Takeoff(ctx context.Context) error {
@@ -446,6 +554,96 @@ func (d *Drone) Land(ctx context.Context) error {
 	return nil
 }
 
-func (d *Drone) MoveTo(ctx context.Context, pos *vec3.T) error {
+func (d *Drone) Hold(ctx context.Context) error {
+	var yaw float32 = drone.NaN
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_OVERRIDE_GOTO,
+		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_CURRENT_POSITION),
+		0, yaw, 0, 0, 0)
+}
+
+func (d *Drone) HoldAt(ctx context.Context, pos *drone.Gps) error {
+	var yaw float32 = drone.NaN
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_OVERRIDE_GOTO,
+		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_SPECIFIED_POSITION),
+		(float32)(common.MAV_FRAME_GLOBAL),
+		yaw, (int32)(pos.Lat*1e7), (int32)(pos.Lon*1e7), pos.Alt*1e3)
+}
+
+func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
+	if len(path) > 0xffff {
+		return errors.New("Too much mission items")
+	}
+	if err := d.WriteMessage(&common.MessageMissionClearAll{
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		MissionType:     common.MAV_MISSION_TYPE_MISSION,
+	}); err != nil {
+		return err
+	}
+	d.missionAck.Store(nil)
+	for i, pos := range path {
+		if err := d.WriteMessage(&common.MessageMissionItemInt{
+			TargetSystem:    (byte)(d.ID()),
+			TargetComponent: d.component,
+			Seq:             (uint16)(i),
+			Frame:           common.MAV_FRAME_GLOBAL,
+			Autocontinue:    1,
+			X:               (int32)(pos.Lat * 1e7),
+			Y:               (int32)(pos.Lon * 1e7),
+			Z:               pos.Alt * 1e3,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Drone) StartMission(ctx context.Context, startId, endId uint16) error {
+	if err := d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_MISSION_START, (float32)(startId), (float32)(endId), 0, 0, 0, 0, 0); err != nil {
+		return err
+	}
+	d.missionAck.Store(nil)
+	return nil
+}
+
+func (d *Drone) WaitForArrive(ctx context.Context, id uint16) error {
+	ack := d.missionAck.Load()
+	for ack == nil {
+		select {
+		case <-d.missionAckSignal:
+			ack = d.missionAck.Load()
+			if ack == nil {
+				select {
+				case <-time.After(time.Millisecond * 50):
+					ack = d.missionAck.Load()
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if ack.Type != common.MAV_MISSION_ACCEPTED {
+		return &MavMissionResultError{ack.Type}
+	}
+	reached := d.missionReached.Load()
+	for reached != (int32)(id) {
+		select {
+		case reached2 := <-d.missionReachedSignal:
+			if reached == reached2 {
+				select {
+				case <-time.After(time.Millisecond * 50):
+					reached = d.missionReached.Load()
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			} else {
+				reached = reached2
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return nil
 }

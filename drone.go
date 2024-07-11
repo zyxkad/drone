@@ -46,7 +46,17 @@ type Drone interface {
 	Disarm(ctx context.Context) error
 	Takeoff(ctx context.Context) error
 	Land(ctx context.Context) error
-	MoveTo(ctx context.Context, pos *vec3.T) error
+	// Hold make the drone hold at current position
+	Hold(ctx context.Context) error
+	// HoldAt make the drone hold at specific position
+	// It does not wait the drone complete its action
+	HoldAt(ctx context.Context, pos *Gps) error
+
+	// SetMission clear the old mission and push new missions
+	SetMission(ctx context.Context, path []*Gps) error
+	StartMission(ctx context.Context, startId, endId uint16) error
+	// id is the waypoint index set by SetMission
+	WaitForArrive(ctx context.Context, id uint16) error
 }
 
 type BatteryStat struct {
@@ -73,5 +83,11 @@ const (
 
 type Pong struct {
 	Duration time.Duration
-	Pos      *vec3.T
+	RespondTime time.Time
+	BootTime time.Time
+}
+
+// Get the ping time (usually half of the ping-pong duration)
+func (p *Pong) Ping() time.Duration {
+	return p.Duration / 2
 }

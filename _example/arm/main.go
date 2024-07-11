@@ -10,6 +10,8 @@ import (
 	"github.com/zyxkad/drone/ardupilot"
 
 	"github.com/bluenviron/gomavlib/v3"
+	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
+	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 )
 
 var (
@@ -60,7 +62,7 @@ func main() {
 				i := 0
 				for {
 					i++
-					if i > 3 {
+					if i > 5 {
 						return
 					}
 					select {
@@ -70,9 +72,21 @@ func main() {
 					}
 					fmt.Println("drone", d.ID(), ":", d)
 				}
-				fmt.Println("arming", d.ID(), "...")
-				fmt.Println("arm:", d.Arm(context.Background()))
 			}(d, ch)
+			fmt.Println("arming", d.ID(), "...")
+			res, err := d.(*ardupilot.Drone).SendCommandLong(context.Background(), nil, common.MAV_CMD_GET_MESSAGE_INTERVAL,
+				(float32)((*ardupilotmega.MessageRadio)(nil).GetID()), 0, 0, 0, 0, 0, 0)
+			fmt.Println("arm:", res, err)
+			fmt.Println("flashing", d.ID(), "...")
+			dur := 1000 * 1000
+			station.Broadcast(&ardupilotmega.MessageLedControl{
+				TargetSystem: (byte)(d.ID()),
+				TargetComponent: 1,
+				Instance: 42,
+				Pattern: 42,
+				CustomLen: 5,
+				CustomBytes: [24]byte{0x0, 0x0, 0x0, (byte)(dur), (byte)(dur >> 8)},
+			})
 		case *drone.EventDroneDisconnected:
 			d := event.Drone
 			if ch, ok := connected[d.ID()]; ok {
@@ -80,6 +94,8 @@ func main() {
 				close(ch)
 			}
 			fmt.Println("drone", d.ID(), "disconnected")
+		case *drone.EventDroneMessage:
+			fmt.Printf("drone %d msg: %#v\n", event.Drone.ID(), event.Message)
 		}
 	}
 }

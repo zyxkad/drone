@@ -43,7 +43,7 @@ func GPSFromPos(v *vec3.T) *Gps {
 	}
 	w := v.Normalized()
 	lat := (float32)(math.Asin((float64)(w[1])))
-	lon := (float32)(math.Atan2((float64)(w[2]), (float64)(w[0])))
+	lon := (float32)(math.Atan2((float64)(w[0]), (float64)(w[2])))
 	return &Gps{
 		Lat: lat * 180 / math.Pi,
 		Lon: lon * 180 / math.Pi,
@@ -61,13 +61,14 @@ func (g *Gps) ToPos() *vec3.T {
 }
 
 // ToPosWithRadius convert a gps position to a relative vec3 position to the center of the planet
+// Y+ axis points to north. Z+ axis points to lon = 0°. X+ axis points to lon = 90° (aka east)
 func (g *Gps) ToPosWithRadius(radius float32) *vec3.T {
 	r := (float64)(radius) + (float64)(g.Alt)
 	lat, lon := (float64)(g.Lat)*math.Pi/180, (float64)(g.Lon)*math.Pi/180
 	lr := r * math.Cos(lat)
 	y := (float32)(r * math.Sin(lat))
-	x := (float32)(lr * math.Cos(lon))
-	z := (float32)(lr * math.Sin(lon))
+	z := (float32)(lr * math.Cos(lon))
+	x := (float32)(lr * math.Sin(lon))
 	return &vec3.T{x, y, z}
 }
 
@@ -90,4 +91,76 @@ func (g *Gps) LonUnitWithRadius(radius float32) float32 {
 	lat := (float64)(g.Lat) * math.Pi / 180
 	lr := r * (float32)(math.Cos(lat))
 	return lr * math.Pi / 180
+}
+
+// MoveToNorth moves to the north along longitude line
+// pass negative value to move to the south
+func (g *Gps) MoveToNorth(distance float32) *Gps {
+	unit := g.LatUnit()
+	if unit == 0 {
+		return g
+	}
+	lat := (float32)(math.Mod((float64)(g.Lat+(distance/unit)), 180))
+	if lat > 90 {
+		lat = 180 - lat
+	} else if lat < -90 {
+		lat = -180 - lat
+	}
+	g.Lat = lat
+	return g
+}
+
+// MoveToNorth moves to the east along latitude line
+// pass negative value to move to the west
+func (g *Gps) MoveToEast(distance float32) *Gps {
+	unit := g.LonUnit()
+	if unit == 0 {
+		return g
+	}
+	lon := (float32)(math.Mod((float64)(g.Lon+(distance/unit)), 360))
+	if lon > 180 {
+		lon -= 360
+	} else if lon < -180 {
+		lon += 360
+	}
+	g.Lon = lon
+	return g
+}
+
+func (g *Gps) Clone() *Gps {
+	o := new(Gps)
+	*o = *g
+	return o
+}
+
+func (g *Gps) DistanceTo(o *Gps) float32 {
+	p, q := g.ToPos(), o.ToPos()
+	return p.Sub(q).Length()
+}
+
+// DistanceToNoAlt is similar than DistanceTo, but assume the altitude is zero
+func (g *Gps) DistanceToNoAlt(o *Gps) float32 {
+	p, q := g.Clone(), o.Clone()
+	p.Alt = 0
+	q.Alt = 0
+	return p.DistanceTo(q)
+}
+
+// GenerateGpsPhalanx generates 2D GPS array with given width(x) and height(y)
+// The first index is north, or y
+// The second index is east, or x
+func GenerateGpsPhalanx(base *Gps, width, height int, size float32) [][]*Gps {
+	m := make([][]*Gps, height)
+	hcur := base
+	for y := range height {
+		l := make([]*Gps, width)
+		m[y] = l
+		wcur := hcur.Clone()
+		for x := range width {
+			l[x] = wcur
+			wcur = wcur.Clone().MoveToEast(size)
+		}
+		hcur = hcur.Clone().MoveToNorth(size)
+	}
+	return m
 }

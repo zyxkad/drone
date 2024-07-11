@@ -45,6 +45,7 @@ type Controller struct {
 	ctx       context.Context
 	cancel    context.CancelCauseFunc
 
+	bootTime     time.Time
 	rtcmSeqCount atomic.Uint32
 }
 
@@ -78,6 +79,7 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 		id:        STATION_ID,
 		drones:    make(map[int]*Drone),
 		events:    make(chan drone.Event, 8),
+		bootTime:  time.Now(),
 	}
 	c.ctx, c.cancel = context.WithCancelCause(context.Background())
 	go c.handleEvents()
@@ -96,6 +98,10 @@ func (c *Controller) Context() context.Context {
 
 func (c *Controller) Endpoints() []*drone.Endpoint {
 	return c.endpoints
+}
+
+func (c *Controller) BootTime() time.Time {
+	return c.bootTime
 }
 
 func (c *Controller) Drones() (drones []drone.Drone) {

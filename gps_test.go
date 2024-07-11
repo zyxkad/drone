@@ -28,17 +28,17 @@ func TestGpsToPos(t *testing.T) {
 		a drone.Gps
 		v vec3.T
 	}{
-		{drone.Gps{0, 0, 0}, vec3.T{6.371e+06, 0, 0}},
-		{drone.Gps{1, 0, 0}, vec3.T{6.3700295e+06, 111189.28, 0}},
-		{drone.Gps{0, 1, 0}, vec3.T{6.3700295e+06, 0, 111189.28}},
-		{drone.Gps{0, 0, 1}, vec3.T{6.371001e+06, 0, 0}},
-		{drone.Gps{1, 1, 0}, vec3.T{6.3690595e+06, 111189.28, 111172.34}},
-		{drone.Gps{1, 361, 0}, vec3.T{6.3690595e+06, 111189.28, 111172.34}},
-		{drone.Gps{1, -361, 0}, vec3.T{6.3690595e+06, 111189.28, -111172.34}},
+		{drone.Gps{0, 0, 0}, vec3.T{0, 0, 6.371e+06}},
+		{drone.Gps{1, 0, 0}, vec3.T{0, 111189.28, 6.3700295e+06}},
+		{drone.Gps{0, 1, 0}, vec3.T{111189.28, 0, 6.3700295e+06}},
+		{drone.Gps{0, 0, 1}, vec3.T{0, 0, 6.371001e+06}},
+		{drone.Gps{1, 1, 0}, vec3.T{111172.34, 111189.28, 6.3690595e+06}},
+		{drone.Gps{1, 361, 0}, vec3.T{111172.34, 111189.28, 6.3690595e+06}},
+		{drone.Gps{1, -361, 0}, vec3.T{-111172.34, 111189.28, 6.3690595e+06}},
 
 		// 8e-10 meters is not a big error
-		{drone.Gps{0, 180, 0}, vec3.T{-6.371e+06, 0, 7.802225e-10}},
-		{drone.Gps{0, -180, 0}, vec3.T{-6.371e+06, 0, -7.802225e-10}},
+		{drone.Gps{0, 180, 0}, vec3.T{7.802225e-10, 0, -6.371e+06}},
+		{drone.Gps{0, -180, 0}, vec3.T{-7.802225e-10, 0, -6.371e+06}},
 	}
 	for _, v := range data {
 		if got := v.a.ToPos(); *got != v.v {
@@ -53,13 +53,14 @@ func TestGpsFromPos(t *testing.T) {
 		v drone.Gps
 	}{
 		{vec3.T{0, 0, 0}, drone.Gps{0, 0, -6.371e+06}},
-		{vec3.T{6.371e+06, 0, 0}, drone.Gps{0, 0, 0}},
-		{vec3.T{6.3700295e+06, 111189.28, 0}, drone.Gps{1, 0, 0}},
-		{vec3.T{6.3700295e+06, 0, 111189.28}, drone.Gps{0, 1, 0}},
-		{vec3.T{6.371001e+06, 0, 0}, drone.Gps{0, 0, 1}},
-		{vec3.T{6.3690595e+06, 111189.28, 111172.34}, drone.Gps{1, 1, 0}},
-		{vec3.T{6.3690595e+06, 111189.28, -111172.34}, drone.Gps{1, -1, 0}},
-		{vec3.T{-6.371e+06, 0, 0}, drone.Gps{0, 180, 0}},
+		{vec3.T{0, 0, 6.371e+06}, drone.Gps{0, 0, 0}},
+		{vec3.T{6.371e+06, 0, 0}, drone.Gps{0, 90, 0}},
+		{vec3.T{0, 111189.28, 6.3700295e+06}, drone.Gps{1, 0, 0}},
+		{vec3.T{111189.28, 0, 6.3700295e+06}, drone.Gps{0, 1, 0}},
+		{vec3.T{0, 0, 6.371001e+06}, drone.Gps{0, 0, 1}},
+		{vec3.T{111172.34, 111189.28, 6.3690595e+06}, drone.Gps{1, 1, 0}},
+		{vec3.T{-111172.34, 111189.28, 6.3690595e+06}, drone.Gps{1, -1, 0}},
+		{vec3.T{0, 0, -6.371e+06}, drone.Gps{0, 180, 0}},
 	}
 	for _, v := range data {
 		if got := drone.GPSFromPos(&v.a); got.String() != v.v.String() {
@@ -78,8 +79,8 @@ func TestGpsDistanceTo(t *testing.T) {
 		{drone.Gps{0, 0, 0}, drone.Gps{-1, 0, 0}, 111193.515625},
 		{drone.Gps{0, 0, 0}, drone.Gps{0, 1, 0}, 111193.515625},
 		{drone.Gps{0, 0, 0}, drone.Gps{0, -1, 0}, 111193.515625},
-		{drone.Gps{0, 0, 1}, drone.Gps{1, 0, 1}, 111193.531250},
-		{drone.Gps{0, 0, 1}, drone.Gps{0, 1, 1}, 111193.531250},
+		{drone.Gps{0, 0, 1}, drone.Gps{1, 0, 1}, 111193.539062},
+		{drone.Gps{0, 0, 1}, drone.Gps{0, 1, 1}, 111193.539062},
 		{drone.Gps{0, 0, 0}, drone.Gps{0, 361, 0}, 111193.515625},
 		{drone.Gps{0, 0, 0}, drone.Gps{0, -361, 0}, 111193.515625},
 		{drone.Gps{1, 0, 0}, drone.Gps{1, 1, 0}, 111176.578125},
