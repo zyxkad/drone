@@ -18,14 +18,12 @@ package ardupilot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3"
-	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
@@ -239,7 +237,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 		})
 	}
 	switch msg := msg.(type) {
-	case *ardupilotmega.MessageSysStatus:
+	case *common.MessageSysStatus:
 		var batteryStat drone.BatteryStat
 		if msg.VoltageBattery == ^(uint16)(0) {
 			batteryStat.Voltage = -1
@@ -260,7 +258,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.controller.sendEvent(&drone.EventDroneStatusChanged{
 			Drone: d,
 		})
-	case *ardupilotmega.MessageGpsRawInt:
+	case *common.MessageGpsRawInt:
 		d.gpsType = msg.FixType
 		d.gps = &drone.Gps{
 			Lat: (float32)(msg.Lat) / 1e7,
@@ -272,7 +270,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 			GPSType: (int)(d.gpsType),
 			GPS:     d.gps,
 		})
-	case *ardupilotmega.MessageHeartbeat:
+	case *common.MessageHeartbeat:
 		if d.customMode != msg.CustomMode {
 			d.customMode = msg.CustomMode
 			d.controller.sendEvent(&drone.EventDroneStatusChanged{
@@ -319,331 +317,4 @@ func (d *Drone) handleMessage(msg message.Message) {
 			}
 		}()
 	}
-}
-
-func (d *Drone) sendCommandIntCh(
-	frame common.MAV_FRAME,
-	cmd common.MAV_CMD,
-	arg1, arg2, arg3, arg4 float32,
-	x, y int32, z float32,
-) (<-chan *common.MessageCommandAck, error) {
-	d.mux.Lock()
-	defer d.mux.Unlock()
-	if _, ok := d.commandAcks[cmd]; ok {
-		return nil, errors.New("Command in progress")
-	}
-	if err := d.SendMessage(&common.MessageCommandInt{
-		TargetSystem:    (uint8)(d.id),
-		TargetComponent: d.component,
-		Command:         cmd,
-		Frame:           frame,
-		Param1:          arg1,
-		Param2:          arg2,
-		Param3:          arg3,
-		Param4:          arg4,
-		X:               x,
-		Y:               y,
-		Z:               z,
-	}); err != nil {
-		return nil, err
-	}
-	ch := make(chan *common.MessageCommandAck, 1)
-	d.commandAcks[cmd] = ch
-	return ch, nil
-}
-
-func (d *Drone) sendCommandLongCh(
-	cmd common.MAV_CMD,
-	confirm uint8,
-	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) (<-chan *common.MessageCommandAck, error) {
-	d.mux.Lock()
-	defer d.mux.Unlock()
-	if _, ok := d.commandAcks[cmd]; ok {
-		return nil, errors.New("Command in progress")
-	}
-	if err := d.sendCommandLongMessage(cmd, confirm, arg1, arg2, arg3, arg4, arg5, arg6, arg7); err != nil {
-		return nil, err
-	}
-	ch := make(chan *common.MessageCommandAck, 1)
-	d.commandAcks[cmd] = ch
-	return ch, nil
-}
-
-func (d *Drone) sendCommandLongMessage(
-	cmd common.MAV_CMD,
-	confirm uint8,
-	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) error {
-	return d.SendMessage(&common.MessageCommandLong{
-		TargetSystem:    (uint8)(d.id),
-		TargetComponent: d.component,
-		Command:         cmd,
-		Confirmation:    confirm,
-		Param1:          arg1,
-		Param2:          arg2,
-		Param3:          arg3,
-		Param4:          arg4,
-		Param5:          arg5,
-		Param6:          arg6,
-		Param7:          arg7,
-	})
-}
-
-func (d *Drone) cancelCommand(cmd common.MAV_CMD) error {
-	d.mux.Lock()
-	defer d.mux.Unlock()
-	ch, ok := d.commandAcks[cmd]
-	if !ok {
-		return errors.New("Command has cancelled")
-	}
-	delete(d.commandAcks, cmd)
-	for {
-		select {
-		case <-ch:
-		default:
-			return nil
-		}
-	}
-}
-
-func (d *Drone) SendCommandInt(
-	ctx context.Context,
-	frame common.MAV_FRAME,
-	cmd common.MAV_CMD,
-	arg1, arg2, arg3, arg4 float32,
-	x, y int32, z float32,
-) (*common.MessageCommandAck, error) {
-	resCh, err := d.sendCommandIntCh(frame, cmd, arg1, arg2, arg3, arg4, x, y, z)
-	if err != nil {
-		return nil, err
-	}
-	select {
-	case msg := <-resCh:
-		return msg, nil
-	case <-ctx.Done():
-		d.cancelCommand(cmd)
-		return nil, ctx.Err()
-	}
-}
-
-func (d *Drone) SendCommandLong(
-	ctx context.Context,
-	progCh chan<- *common.MessageCommandAck,
-	cmd common.MAV_CMD,
-	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) (*common.MessageCommandAck, error) {
-	const maxCommandPing = time.Millisecond * 200
-	const maxConfirm = 10
-
-	resCh, err := d.sendCommandLongCh(cmd, 0, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-	if err != nil {
-		return nil, err
-	}
-	confirm := (uint8)(0)
-RESEND:
-	for {
-		select {
-		case msg := <-resCh:
-			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
-				if progCh != nil {
-					progCh <- msg
-				}
-				break RESEND
-			}
-			return msg, nil
-		case <-time.After(maxCommandPing):
-			confirm++
-			if err := d.sendCommandLongMessage(cmd, confirm, arg1, arg2, arg3, arg4, arg5, arg6, arg7); err != nil {
-				d.cancelCommand(cmd)
-				return nil, err
-			}
-		case <-ctx.Done():
-			d.cancelCommand(cmd)
-			return nil, ctx.Err()
-		}
-	}
-	for {
-		select {
-		case msg := <-resCh:
-			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
-				if progCh != nil {
-					select {
-					case progCh <- msg:
-					case <-ctx.Done():
-						d.cancelCommand(cmd)
-						return nil, ctx.Err()
-					}
-				}
-				continue
-			}
-			return msg, nil
-		case <-ctx.Done():
-			d.cancelCommand(cmd)
-			return nil, ctx.Err()
-		}
-	}
-}
-
-func (d *Drone) SendCommandIntOrError(
-	ctx context.Context,
-	frame common.MAV_FRAME,
-	cmd common.MAV_CMD,
-	arg1, arg2, arg3, arg4 float32,
-	x, y int32, z float32,
-) error {
-	ack, err := d.SendCommandInt(ctx, frame, cmd, arg1, arg2, arg3, arg4, x, y, z)
-	if err != nil {
-		return err
-	}
-	if ack.Result != common.MAV_RESULT_ACCEPTED {
-		return &MavResultError{ack.Result}
-	}
-	return nil
-}
-
-func (d *Drone) SendCommandLongOrError(
-	ctx context.Context,
-	progCh chan<- *common.MessageCommandAck,
-	cmd common.MAV_CMD,
-	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
-) error {
-	ack, err := d.SendCommandLong(ctx, progCh, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-	if err != nil {
-		return err
-	}
-	if ack.Result != common.MAV_RESULT_ACCEPTED {
-		return &MavResultError{ack.Result}
-	}
-	return nil
-}
-
-func (d *Drone) Arm(ctx context.Context) error {
-	return d.arm(ctx, 0)
-}
-
-func (d *Drone) ForceArm(ctx context.Context) error {
-	return d.arm(ctx, 21196)
-}
-
-func (d *Drone) arm(ctx context.Context, param2 float32) error {
-	return d.armOrDisarm(ctx, 1, param2)
-}
-
-func (d *Drone) Disarm(ctx context.Context) error {
-	return d.disarm(ctx, 0)
-}
-
-func (d *Drone) ForceDisarm(ctx context.Context) error {
-	return d.disarm(ctx, 21196)
-}
-
-func (d *Drone) disarm(ctx context.Context, param2 float32) error {
-	return d.armOrDisarm(ctx, 0, param2)
-}
-
-func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
-	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_COMPONENT_ARM_DISARM, param1, param2, 0, 0, 0, 0, 0)
-}
-
-func (d *Drone) Takeoff(ctx context.Context) error {
-	return nil
-}
-
-func (d *Drone) Land(ctx context.Context) error {
-	return nil
-}
-
-func (d *Drone) Hold(ctx context.Context) error {
-	var yaw float32 = drone.NaN
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_OVERRIDE_GOTO,
-		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_CURRENT_POSITION),
-		0, yaw, 0, 0, 0)
-}
-
-func (d *Drone) HoldAt(ctx context.Context, pos *drone.Gps) error {
-	var yaw float32 = drone.NaN
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_OVERRIDE_GOTO,
-		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_SPECIFIED_POSITION),
-		(float32)(common.MAV_FRAME_GLOBAL),
-		yaw, (int32)(pos.Lat*1e7), (int32)(pos.Lon*1e7), pos.Alt*1e3)
-}
-
-func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
-	if len(path) > 0xffff {
-		return errors.New("Too much mission items")
-	}
-	if err := d.WriteMessage(&common.MessageMissionClearAll{
-		TargetSystem:    (byte)(d.ID()),
-		TargetComponent: d.component,
-		MissionType:     common.MAV_MISSION_TYPE_MISSION,
-	}); err != nil {
-		return err
-	}
-	d.missionAck.Store(nil)
-	for i, pos := range path {
-		if err := d.WriteMessage(&common.MessageMissionItemInt{
-			TargetSystem:    (byte)(d.ID()),
-			TargetComponent: d.component,
-			Seq:             (uint16)(i),
-			Frame:           common.MAV_FRAME_GLOBAL,
-			Autocontinue:    1,
-			X:               (int32)(pos.Lat * 1e7),
-			Y:               (int32)(pos.Lon * 1e7),
-			Z:               pos.Alt * 1e3,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (d *Drone) StartMission(ctx context.Context, startId, endId uint16) error {
-	if err := d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_MISSION_START, (float32)(startId), (float32)(endId), 0, 0, 0, 0, 0); err != nil {
-		return err
-	}
-	d.missionAck.Store(nil)
-	return nil
-}
-
-func (d *Drone) WaitForArrive(ctx context.Context, id uint16) error {
-	ack := d.missionAck.Load()
-	for ack == nil {
-		select {
-		case <-d.missionAckSignal:
-			ack = d.missionAck.Load()
-			if ack == nil {
-				select {
-				case <-time.After(time.Millisecond * 50):
-					ack = d.missionAck.Load()
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	if ack.Type != common.MAV_MISSION_ACCEPTED {
-		return &MavMissionResultError{ack.Type}
-	}
-	reached := d.missionReached.Load()
-	for reached != (int32)(id) {
-		select {
-		case reached2 := <-d.missionReachedSignal:
-			if reached == reached2 {
-				select {
-				case <-time.After(time.Millisecond * 50):
-					reached = d.missionReached.Load()
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			} else {
-				reached = reached2
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return nil
 }

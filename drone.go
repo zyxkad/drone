@@ -54,9 +54,9 @@ type Drone interface {
 
 	// SetMission clear the old mission and push new missions
 	SetMission(ctx context.Context, path []*Gps) error
-	StartMission(ctx context.Context, startId, endId uint16) error
+	StartMission(ctx context.Context, startId, endId int) error
 	// id is the waypoint index set by SetMission
-	WaitForArrive(ctx context.Context, id uint16) error
+	WaitUntilReached(ctx context.Context, id int) error
 }
 
 type BatteryStat struct {

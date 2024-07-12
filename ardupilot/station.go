@@ -27,6 +27,7 @@ import (
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialect"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
+	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
 
@@ -153,7 +154,7 @@ func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 	const MAX_MSG_LEN = 180
 	seqCount := (byte)(c.rtcmSeqCount.Add(1)-1) & 0x1f
 	if n <= MAX_MSG_LEN {
-		msg := &ardupilotmega.MessageGpsRtcmData{
+		msg := &common.MessageGpsRtcmData{
 			Flags: seqCount << 3,
 			Len:   (uint8)(n),
 		}
@@ -165,7 +166,7 @@ func (c *Controller) encodeRTCMAsMessages(buf []byte) []message.Message {
 	}
 	msgs := make([]message.Message, 0, 4)
 	for i := (byte)(0); i < 4; i++ {
-		msg := new(ardupilotmega.MessageGpsRtcmData)
+		msg := new(common.MessageGpsRtcmData)
 		msg.Flags = 0x01 | (i << 1) | (seqCount << 3)
 		msg.Len = (uint8)(min(len(buf), MAX_MSG_LEN))
 		copy(msg.Data[:], buf[:msg.Len])
@@ -237,6 +238,9 @@ func (c *Controller) handleEvent(event gomavlib.Event) {
 			d, ok := c.drones[droneId]
 			c.mux.RUnlock()
 			if !ok {
+				if _, isheartbeat := msg.(*common.MessageHeartbeat); !isheartbeat {
+					return
+				}
 				c.mux.Lock()
 				if d, ok = c.drones[droneId]; !ok {
 					d = newDrone(c, event.Channel, droneId, compId)
