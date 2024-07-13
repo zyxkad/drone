@@ -18,8 +18,6 @@ package drone
 
 import (
 	"fmt"
-
-	"github.com/ungerik/go3d/vec3"
 )
 
 type Event interface {
@@ -66,7 +64,7 @@ type EventDronePositionChanged struct {
 	Drone   Drone
 	GPSType int
 	GPS     *Gps
-	Rotate  *vec3.T
+	Rotate  *Rotate
 }
 
 func (*EventDronePositionChanged) GetType() string {

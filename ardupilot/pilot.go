@@ -27,7 +27,6 @@ import (
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
-	"github.com/ungerik/go3d/vec3"
 
 	"github.com/zyxkad/drone"
 )
@@ -48,12 +47,12 @@ type Drone struct {
 
 	gpsType        common.GPS_FIX_TYPE
 	gps            *drone.Gps
+	home           *drone.Gps
 	satelliteCount int
-	rotate         *vec3.T
+	rotate         *drone.Rotate
 	battery        drone.BatteryStat
-	// TODO: change drone status when conditions match
-	status     drone.DroneStatus
-	customMode uint32
+	status         drone.DroneStatus
+	customMode     uint32
 
 	pingAck              chan *common.MessageSystemTime
 	commandAcks          map[common.MAV_CMD]chan *common.MessageCommandAck
@@ -126,13 +125,19 @@ func (d *Drone) GetGPS() *drone.Gps {
 	return d.gps
 }
 
+func (d *Drone) GetHome() *drone.Gps {
+	d.mux.RLock()
+	defer d.mux.RUnlock()
+	return d.home
+}
+
 func (d *Drone) GetSatelliteCount() int {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.satelliteCount
 }
 
-func (d *Drone) GetRotate() *vec3.T {
+func (d *Drone) GetRotate() *drone.Rotate {
 	d.mux.RLock()
 	defer d.mux.RUnlock()
 	return d.rotate
@@ -168,12 +173,10 @@ func (d *Drone) ExtraInfo() any {
 
 func (d *Drone) Ping(ctx context.Context) (*drone.Pong, error) {
 	start := time.Now()
-	if err := d.WriteMessage(&common.MessageSystemTime{
-		TimeUnixUsec: (uint64)(start.UnixMicro()),
-		TimeBootMs:   (uint32)(start.Sub(d.controller.BootTime()).Milliseconds()),
-	}); err != nil {
+	if err := d.RequestMessageWithType(ctx, (*common.MessageSystemTime)(nil)); err != nil {
 		return nil, err
 	}
+	go d.RequestMessageWithType(context.Background(), (*common.MessageHomePosition)(nil))
 	select {
 	case ack := <-d.pingAck:
 		respondTime := time.UnixMicro((int64)(ack.TimeUnixUsec))
@@ -237,6 +240,36 @@ func (d *Drone) handleMessage(msg message.Message) {
 		})
 	}
 	switch msg := msg.(type) {
+	case *common.MessageHeartbeat:
+		if d.customMode != msg.CustomMode {
+			d.customMode = msg.CustomMode
+			d.controller.sendEvent(&drone.EventDroneStatusChanged{
+				Drone: d,
+			})
+		}
+		switch msg.SystemStatus {
+		case common.MAV_STATE_UNINIT, common.MAV_STATE_BOOT, common.MAV_STATE_CALIBRATING:
+			d.status = drone.StatusUnstable
+		case common.MAV_STATE_STANDBY:
+			d.status = drone.StatusReady
+		case common.MAV_STATE_ACTIVE:
+			if msg.BaseMode&common.MAV_MODE_FLAG_SAFETY_ARMED != 0 {
+				d.status = drone.StatusArmed
+			} else if msg.BaseMode&(common.MAV_MODE_FLAG_GUIDED_ENABLED|common.MAV_MODE_FLAG_AUTO_ENABLED) != 0 {
+				d.status = drone.StatusNav
+			} else {
+				d.status = drone.StatusTakenoff
+			}
+		case common.MAV_STATE_CRITICAL, common.MAV_STATE_EMERGENCY:
+			d.status = drone.StatusError
+		case common.MAV_STATE_POWEROFF, common.MAV_STATE_FLIGHT_TERMINATION:
+			if d.status != drone.StatusError {
+				d.status = drone.StatusSleeping
+			}
+		default:
+			// Should be unreachable
+			d.status = drone.StatusUnstable
+		}
 	case *common.MessageSysStatus:
 		var batteryStat drone.BatteryStat
 		if msg.VoltageBattery == ^(uint16)(0) {
@@ -260,23 +293,17 @@ func (d *Drone) handleMessage(msg message.Message) {
 		})
 	case *common.MessageGpsRawInt:
 		d.gpsType = msg.FixType
-		d.gps = &drone.Gps{
-			Lat: (float32)(msg.Lat) / 1e7,
-			Lon: (float32)(msg.Lon) / 1e7,
-			Alt: (float32)(msg.Alt) / 1e3,
-		}
+	case *common.MessageGlobalPositionInt:
+		d.gps = drone.GPSFromWGS84(msg.Lat, msg.Lon, msg.Alt)
 		d.controller.sendEvent(&drone.EventDronePositionChanged{
 			Drone:   d,
 			GPSType: (int)(d.gpsType),
 			GPS:     d.gps,
 		})
-	case *common.MessageHeartbeat:
-		if d.customMode != msg.CustomMode {
-			d.customMode = msg.CustomMode
-			d.controller.sendEvent(&drone.EventDroneStatusChanged{
-				Drone: d,
-			})
-		}
+	case *common.MessageHomePosition:
+		d.home = drone.GPSFromWGS84(msg.Latitude, msg.Longitude, msg.Altitude)
+	case *common.MessageAttitude:
+		d.rotate = drone.RotateFromPi(msg.Roll, msg.Pitch, msg.Yaw)
 	case *common.MessageSystemTime:
 		select {
 		case d.pingAck <- msg:

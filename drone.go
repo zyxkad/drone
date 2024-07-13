@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/ungerik/go3d/vec3"
 )
 
 type Drone interface {
@@ -31,14 +29,16 @@ type Drone interface {
 	Name() string
 	GetGPSType() int
 	GetGPS() *Gps
+	GetHome() *Gps
 	GetSatelliteCount() int // -1 means invalid
-	GetRotate() *vec3.T
+	GetRotate() *Rotate
 	GetBattery() BatteryStat
 	GetMode() int
 	GetStatus() DroneStatus
 	LastActivate() time.Time
 	ExtraInfo() any
 
+	SetHome(ctx context.Context, pos *Gps) error
 	Ping(ctx context.Context) (*Pong, error)
 	SendMessage(msg any) error
 
@@ -69,22 +69,10 @@ func (s BatteryStat) String() string {
 	return fmt.Sprintf("{%.03fV %.03fA %.1f%%}", s.Voltage, s.Current, s.Remaining*100)
 }
 
-type DroneStatus string
-
-const (
-	StatusNone     DroneStatus = "N/A"
-	StatusUnstable DroneStatus = "UNSTABLE"
-	StatusReady    DroneStatus = "READY"
-	StatusSleeping DroneStatus = "SLEEPING"
-	StatusArmed    DroneStatus = "ARMED"
-	StatusTakenoff DroneStatus = "TAKENOFF"
-	StatusError    DroneStatus = "ERROR"
-)
-
 type Pong struct {
-	Duration time.Duration
+	Duration    time.Duration
 	RespondTime time.Time
-	BootTime time.Time
+	BootTime    time.Time
 }
 
 // Get the ping time (usually half of the ping-pong duration)

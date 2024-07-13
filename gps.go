@@ -31,6 +31,14 @@ type Gps struct {
 	Alt float32 `json:"alt"` // Altitude in meters
 }
 
+func GPSFromWGS84(lat, lon int32, alt int32) *Gps {
+	return &Gps{
+		Lat: (float32)(lat) / 1e7,
+		Lon: (float32)(lon) / 1e7,
+		Alt: (float32)(alt) / 1e3,
+	}
+}
+
 func GPSFromPos(v *vec3.T) *Gps {
 	const baseRadius = earthRadius
 	alt := v.Length()
@@ -53,6 +61,10 @@ func GPSFromPos(v *vec3.T) *Gps {
 
 func (g *Gps) String() string {
 	return fmt.Sprintf("Gps{ Lat: %.6f, Lon: %.6f, Alt: %.4fm }", g.Lat, g.Lon, g.Alt)
+}
+
+func (g *Gps) ToWGS84() (lat, lon int32) {
+	return (int32)(lat * 1e7), (int32)(lon * 1e7)
 }
 
 // ToPos convert a gps position to a relative vec3 position to the center of the Earth

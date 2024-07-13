@@ -32,25 +32,25 @@ import (
 	"github.com/zyxkad/drone"
 )
 
-type Server struct {
+type Client struct {
 	serverAddr *net.UDPAddr
 	closed     atomic.Bool
 	mux        sync.RWMutex
 	conns      map[int]*net.UDPConn
 }
 
-func NewServer(address string) (*Server, error) {
+func NewClient(address string) (*Client, error) {
 	addr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	return &Client{
 		serverAddr: addr,
 		conns:      make(map[int]*net.UDPConn),
 	}, nil
 }
 
-func (s *Server) Close() error {
+func (s *Client) Close() error {
 	s.mux.Lock()
 	for id, conn := range s.conns {
 		conn.Close()
@@ -61,11 +61,11 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) RemoteAddr() *net.UDPAddr {
+func (s *Client) RemoteAddr() *net.UDPAddr {
 	return s.serverAddr
 }
 
-func (s *Server) RunForward(c drone.Controller, eventCh <-chan drone.Event) error {
+func (s *Client) RunForward(c drone.Controller, eventCh <-chan drone.Event) error {
 	if s.closed.Load() {
 		return errors.New("closed")
 	}
@@ -116,7 +116,7 @@ func (s *Server) RunForward(c drone.Controller, eventCh <-chan drone.Event) erro
 	return nil
 }
 
-func (s *Server) runHandle(c drone.Controller, dr drone.Drone, conn *net.UDPConn) error {
+func (s *Client) runHandle(c drone.Controller, dr drone.Drone, conn *net.UDPConn) error {
 	defer conn.Close()
 	defer func() {
 		s.mux.Lock()

@@ -14,36 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package drone
 
 import (
-	"flag"
-	"fmt"
-	"log"
-	"net/http"
+	"math"
 )
 
-var (
-	addr string = "localhost:5050"
+var NaN = (float32)(math.NaN())
+
+type DroneStatus string
+
+const (
+	StatusNone     DroneStatus = "N/A"
+	StatusUnstable DroneStatus = "UNSTABLE"
+	StatusReady    DroneStatus = "READY"
+	StatusSleeping DroneStatus = "SLEEPING"
+	StatusArmed    DroneStatus = "ARMED"
+	StatusTakenoff DroneStatus = "TAKENOFF"
+	StatusNav      DroneStatus = "NAV"
+	StatusError    DroneStatus = "ERROR"
 )
 
-func parseFlags() {
-	flag.StringVar(&addr, "addr", addr, "The address the http server going to listen on")
-	flag.Parse()
-}
+type DroneAction string
 
-func main() {
-	parseFlags()
-	subCmd := flag.Arg(1)
-	if subCmd == "license" {
-		fmt.Println(LICENSE_LONG)
-		return
-	}
-	fmt.Print(LICENSE_SHORT)
-	server := NewServer()
-	log.Println("Server starting at", "http://"+addr)
-	err := http.ListenAndServe(addr, server.Handler())
-	if err != nil {
-		log.Println("Serve error:", err)
-	}
-}
+const (
+	ActionArm     DroneAction = "ARM"
+	ActionDisarm  DroneAction = "DISARM"
+	ActionHome    DroneAction = "HOME"
+	ActionLand    DroneAction = "LAND"
+	ActionTakeoff DroneAction = "TAKEOFF"
+	ActionHold    DroneAction = "HOLD"
+	ActionSleep   DroneAction = "SLEEP"
+	ActionWakeup  DroneAction = "WAKEUP"
+)

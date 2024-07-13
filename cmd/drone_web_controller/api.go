@@ -41,6 +41,7 @@ func (s *Server) buildAPIRoute() {
 	s.route.HandleFunc("DELETE /api/rtk/connect", s.routeRtkConnectDELETE)
 	s.route.HandleFunc("GET /api/satellite/config", s.routeSatelliteConfigGET)
 	s.route.HandleFunc("POST /api/satellite/config", s.routeSatelliteConfigPOST)
+	s.buildAPIDroneRoute()
 }
 
 func (s *Server) routePing(rw http.ResponseWriter, req *http.Request) {

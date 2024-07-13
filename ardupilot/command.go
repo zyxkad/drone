@@ -22,6 +22,9 @@ import (
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
+	"github.com/bluenviron/gomavlib/v3/pkg/message"
+
+	"github.com/zyxkad/drone"
 )
 
 var errCommandInProgress = errors.New("Command in progress")
@@ -221,4 +224,23 @@ func (d *Drone) SendCommandLongOrError(
 		return &MavResultError{ack.Result}
 	}
 	return nil
+}
+
+func (d *Drone) RequestMessage(ctx context.Context, id uint32) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_REQUEST_MESSAGE, (float32)(id), 0, 0, 0, 0, 0, 1)
+}
+
+func (d *Drone) RequestMessageWithType(ctx context.Context, msg message.Message) error {
+	return d.RequestMessage(ctx, msg.GetID())
+}
+
+func (d *Drone) SetHome(ctx context.Context, pos *drone.Gps) error {
+	if pos == nil {
+		return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_SET_HOME, 1,
+			0, 0, 0, 0, 0, 0)
+	}
+	lat, lon := pos.ToWGS84()
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_SET_HOME, 0,
+		drone.NaN, drone.NaN, drone.NaN,
+		lat, lon, pos.Alt)
 }

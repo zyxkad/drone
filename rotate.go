@@ -14,36 +14,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package drone
 
 import (
-	"flag"
 	"fmt"
-	"log"
-	"net/http"
+	"math"
 )
 
-var (
-	addr string = "localhost:5050"
-)
-
-func parseFlags() {
-	flag.StringVar(&addr, "addr", addr, "The address the http server going to listen on")
-	flag.Parse()
+// The unit for rotate is in degrees
+type Rotate struct {
+	Roll  float32 `json:"roll"`
+	Pitch float32 `json:"pitch"`
+	Yaw   float32 `json:"yaw"`
 }
 
-func main() {
-	parseFlags()
-	subCmd := flag.Arg(1)
-	if subCmd == "license" {
-		fmt.Println(LICENSE_LONG)
-		return
+func RotateFromPi(roll, pitch, yaw float32) *Rotate {
+	return &Rotate{
+		Roll:  roll * math.Pi / 180,
+		Pitch: pitch * math.Pi / 180,
+		Yaw:   yaw * math.Pi / 180,
 	}
-	fmt.Print(LICENSE_SHORT)
-	server := NewServer()
-	log.Println("Server starting at", "http://"+addr)
-	err := http.ListenAndServe(addr, server.Handler())
-	if err != nil {
-		log.Println("Serve error:", err)
-	}
+}
+
+func (r *Rotate) String() string {
+	return fmt.Sprintf("Rotate{ Roll: %.2f° Pitch: %.2f° Yaw: %.2f° }", r.Roll, r.Pitch, r.Yaw)
 }

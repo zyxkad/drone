@@ -14,10 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package main
 
 import (
-	"math"
+	// "encoding/json"
+	// "mime"
+	// "net/http"
+	// "strconv"
+	// "time"
+
+	// "github.com/bluenviron/gomavlib/v3"
+
+	// "github.com/zyxkad/drone"
+	// "github.com/zyxkad/drone/ardupilot"
 )
 
-var NaN = (float32)(math.NaN())
+func (s *Server) buildAPIDroneRoute() {
+	// s.route.HandleFunc("POST /api/drone/action", s.routeDroneAction)
+	// s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
+}

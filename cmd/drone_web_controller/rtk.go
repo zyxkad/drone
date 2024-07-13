@@ -202,7 +202,6 @@ func (s *Server) broadcastRTKRTCM(rtk *drone.RTK, closeSig <-chan struct{}) {
 			}
 			if forward {
 				if ctrl := s.Controller(); ctrl != nil {
-					println("broadcasting rtk packet")
 					if e := ctrl.BroadcastRTCM(frame.Serialize()); e != nil {
 						s.Log(LevelError, "Error when broadcasting RTCM:", e)
 					}
