@@ -55,11 +55,31 @@ func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
 }
 
 func (d *Drone) Takeoff(ctx context.Context) error {
-	return nil
+	d.mux.Lock()
+	d.home = d.gps.Clone()
+	d.mux.Unlock()
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_NAV_TAKEOFF,
+		0, 0, 0,
+		drone.NaN, 0, 0, -1)
 }
 
 func (d *Drone) Land(ctx context.Context) error {
-	return nil
+	return d.LandAt(ctx, d.GetHome())
+}
+
+func (d *Drone) LandAt(ctx context.Context, pos *drone.Gps) error {
+	var yaw float32 = drone.NaN
+	lat, lon := pos.ToWGS84()
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_NAV_LAND,
+		0, (float32)(common.PRECISION_LAND_MODE_OPPORTUNISTIC), 0,
+		yaw, lat, lon, pos.Alt)
+}
+
+func (d *Drone) Home(ctx context.Context) error {
+	lat, lon := d.GetHome().ToWGS84()
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL_RELATIVE_ALT, common.MAV_CMD_NAV_LAND,
+		0, (float32)(common.PRECISION_LAND_MODE_OPPORTUNISTIC), 0,
+		drone.NaN, lat, lon, 0)
 }
 
 func (d *Drone) Hold(ctx context.Context) error {
@@ -71,10 +91,11 @@ func (d *Drone) Hold(ctx context.Context) error {
 
 func (d *Drone) HoldAt(ctx context.Context, pos *drone.Gps) error {
 	var yaw float32 = drone.NaN
+	lat, lon := pos.ToWGS84()
 	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_OVERRIDE_GOTO,
 		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_SPECIFIED_POSITION),
 		(float32)(common.MAV_FRAME_GLOBAL),
-		yaw, (int32)(pos.Lat*1e7), (int32)(pos.Lon*1e7), pos.Alt*1e3)
+		yaw, lat, lon, pos.Alt)
 }
 
 func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
@@ -90,15 +111,16 @@ func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
 	}
 	d.missionAck.Store(nil)
 	for i, pos := range path {
+		lat, lon := pos.ToWGS84()
 		if err := d.WriteMessage(&common.MessageMissionItemInt{
 			TargetSystem:    (byte)(d.ID()),
 			TargetComponent: d.component,
 			Seq:             (uint16)(i),
 			Frame:           common.MAV_FRAME_GLOBAL,
 			Autocontinue:    1,
-			X:               (int32)(pos.Lat * 1e7),
-			Y:               (int32)(pos.Lon * 1e7),
-			Z:               pos.Alt * 1e3,
+			X:               lat,
+			Y:               lon,
+			Z:               pos.Alt,
 		}); err != nil {
 			return err
 		}

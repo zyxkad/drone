@@ -35,17 +35,23 @@ type Drone interface {
 	GetBattery() BatteryStat
 	GetMode() int
 	GetStatus() DroneStatus
+	GetPing() time.Duration
+	GetBootTime() time.Time
 	LastActivate() time.Time
 	ExtraInfo() any
 
-	SetHome(ctx context.Context, pos *Gps) error
-	Ping(ctx context.Context) (*Pong, error)
+	UpdateMode(ctx context.Context, mode int) error
+	UpdateHome(ctx context.Context, pos *Gps) error
+	// Ping requests to update some specific messages
+	// It does not wait till pong is received
+	Ping(ctx context.Context) error
 	SendMessage(msg any) error
 
 	Arm(ctx context.Context) error
 	Disarm(ctx context.Context) error
 	Takeoff(ctx context.Context) error
 	Land(ctx context.Context) error
+	Home(ctx context.Context) error
 	// Hold make the drone hold at current position
 	Hold(ctx context.Context) error
 	// HoldAt make the drone hold at specific position
@@ -54,7 +60,8 @@ type Drone interface {
 
 	// SetMission clear the old mission and push new missions
 	SetMission(ctx context.Context, path []*Gps) error
-	StartMission(ctx context.Context, startId, endId int) error
+	// StartMission run the mission items in the range [startIndex, endIndex]
+	StartMission(ctx context.Context, startIndex, endIndex int) error
 	// id is the waypoint index set by SetMission
 	WaitUntilReached(ctx context.Context, id int) error
 }

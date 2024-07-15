@@ -1,7 +1,5 @@
 bou.ke/monkey v1.0.2 h1:kWcnsrCNUatbxncxR/ThdYqbytgOIArtYWqcQLQzKLI=
 bou.ke/monkey v1.0.2/go.mod h1:OqickVX3tNx6t33n1xvtTtu85YN5s6cKwVug+oHMaIA=
-github.com/LiterMC/go-aws v1.0.0 h1:9IpJ6eFb2r2IWdbDkklLfwfF8XS3P6+AqiaGN3uJl3M=
-github.com/LiterMC/go-aws v1.0.0/go.mod h1:GZ+tUCoWDffdkS1m7LDUjCs12kKhJ42lI/aWteNlr8s=
 github.com/LiterMC/go-aws v1.0.1 h1:HFfN4PZux5PHPghPJ0sPSmUvbI/JilmnZYe2jkn3cIc=
 github.com/LiterMC/go-aws v1.0.1/go.mod h1:GZ+tUCoWDffdkS1m7LDUjCs12kKhJ42lI/aWteNlr8s=
 github.com/bamiaux/iobit v0.0.0-20170418073505-498159a04883 h1:XNtOMwxmV2PI/vuTHDZnFzGIFNUh8MK73q7+Kna7AXs=
@@ -24,6 +22,8 @@ github.com/gobuffalo/httptest v1.5.0/go.mod h1:F541Rwcu9Ypo1NBAsYxrCV0J6ibAGGEvh
 github.com/google/go-cmp v0.3.1 h1:Xye71clBPdm5HgqGwUkwhbynsUJZhDbS20FvLhQ2izg=
 github.com/google/go-cmp v0.3.1/go.mod h1:8QqcDgzrUqlUb/G2PQTWiueGozuR1884gddMywk6iLU=
 github.com/google/uuid v1.1.1/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/gorilla/schema v1.4.1 h1:jUg5hUjCSDZpNGLuXQOgIWGdlgrIdYvgQ0wZtdK1M3E=
+github.com/gorilla/schema v1.4.1/go.mod h1:Dg5SSm5PV60mhF2NFaTV1xuYYj8tV8NOPRo4FggUMnM=
 github.com/gorilla/securecookie v1.1.1/go.mod h1:ra0sb63/xPlUeL+yeDciTfxMRAA+MP+HVt/4epWDjd4=
 github.com/gorilla/sessions v1.2.0/go.mod h1:dk2InVEVJ0sfLlnXv9EAgkf6ecYs/i80K/zI+bUmuGM=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=

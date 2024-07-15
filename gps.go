@@ -105,8 +105,8 @@ func (g *Gps) LonUnitWithRadius(radius float32) float32 {
 	return lr * math.Pi / 180
 }
 
-// MoveToNorth moves to the north along longitude line
-// pass negative value to move to the south
+// MoveToNorth moves the position to north along longitude line
+// pass negative value to move to south
 func (g *Gps) MoveToNorth(distance float32) *Gps {
 	unit := g.LatUnit()
 	if unit == 0 {
@@ -122,8 +122,8 @@ func (g *Gps) MoveToNorth(distance float32) *Gps {
 	return g
 }
 
-// MoveToNorth moves to the east along latitude line
-// pass negative value to move to the west
+// MoveToEast moves the position to east along latitude line
+// pass negative value to move to west
 func (g *Gps) MoveToEast(distance float32) *Gps {
 	unit := g.LonUnit()
 	if unit == 0 {
@@ -136,6 +136,14 @@ func (g *Gps) MoveToEast(distance float32) *Gps {
 		lon += 360
 	}
 	g.Lon = lon
+	return g
+}
+
+// MoveToUp moves the position to the up along altitude
+// pass negative value to move down
+func (g *Gps) MoveToUp(distance float32) *Gps {
+	g.Alt += distance
+	// Q: when altitude pass through the center?
 	return g
 }
 
@@ -175,4 +183,21 @@ func GenerateGpsPhalanx(base *Gps, width, height int, size float32) [][]*Gps {
 		hcur = hcur.Clone().MoveToNorth(size)
 	}
 	return m
+}
+
+func (g *Gps) DistanceAltComparator(a, b *Gps) int {
+	d1 := g.DistanceToNoAlt(a)
+	d2 := g.DistanceToNoAlt(b)
+	if c := d2 - d1; c < -0.5 || 0.5 < c {
+		if c < 0 {
+			return -1
+		}
+		return 1
+	}
+	if c := a.Alt - b.Alt; c < 0 {
+		return -1
+	} else if c > 0 {
+		return 1
+	}
+	return 0
 }

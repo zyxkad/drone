@@ -47,6 +47,7 @@ type Controller struct {
 	cancel    context.CancelCauseFunc
 
 	bootTime     time.Time
+	timesyncId   atomic.Int64
 	rtcmSeqCount atomic.Uint32
 }
 
@@ -84,6 +85,7 @@ func NewController(endpoints ...gomavlib.EndpointConf) (*Controller, error) {
 	}
 	c.ctx, c.cancel = context.WithCancelCause(context.Background())
 	go c.handleEvents()
+	go c.sendCyclePackets()
 	return c, nil
 }
 
@@ -101,7 +103,7 @@ func (c *Controller) Endpoints() []*drone.Endpoint {
 	return c.endpoints
 }
 
-func (c *Controller) BootTime() time.Time {
+func (c *Controller) GetBootTime() time.Time {
 	return c.bootTime
 }
 
@@ -205,6 +207,29 @@ func (c *Controller) handleEvents() {
 			c.handleEvent(event)
 		case <-c.ctx.Done():
 			return
+		}
+	}
+}
+
+func (c *Controller) sendCyclePackets() {
+	ticker := time.NewTicker(time.Millisecond * 500)
+	defer ticker.Stop()
+	timesyncCt := 0
+	for {
+		select {
+		case <-ticker.C:
+			timesyncCt++
+		case <-c.ctx.Done():
+			return
+		}
+		if timesyncCt >= 20 {
+			timesyncCt = 0
+			now := time.Now().UnixNano()
+			go c.node.WriteMessageAll(&common.MessageTimesync{
+				Tc1: 0,
+				Ts1: now,
+			})
+			c.timesyncId.Store(now)
 		}
 	}
 }

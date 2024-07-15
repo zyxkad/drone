@@ -27,13 +27,12 @@ import (
 )
 
 type DroneStatusMsg struct {
-	Id           int               `json:"id"`
-	Status       drone.DroneStatus `json:"status"`
-	Mode         int               `json:"mode"`
-	Battery      drone.BatteryStat `json:"battery"`
-	Home         *drone.Gps        `json:"home"`
-	LastActivate int64             `json:"lastActivate"`
-	Extra        any               `json:"extra"`
+	Id      int               `json:"id"`
+	Status  drone.DroneStatus `json:"status"`
+	Mode    int               `json:"mode"`
+	Battery drone.BatteryStat `json:"battery"`
+	Home    *drone.Gps        `json:"home"`
+	Extra   any               `json:"extra"`
 }
 
 type DronePositionMsg struct {
@@ -44,9 +43,10 @@ type DronePositionMsg struct {
 }
 
 type DronePingMsg struct {
-	Id       int   `json:"id"`
-	BootTime int64 `json:"bootTime"`
-	Ping     int64 `json:"ping"`
+	Id           int   `json:"id"`
+	BootTime     int64 `json:"bootTime"`
+	Ping         int64 `json:"ping"`
+	LastActivate int64 `json:"lastActivate"`
 }
 
 func (s *Server) sendDroneList(ws *aws.WebSocket) error {
@@ -121,25 +121,22 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 				ctx, cancel := context.WithCancel(context.Background())
 				pingTickers[d.ID()] = cancel
 				go func(ctx context.Context, d drone.Drone) {
-					ticker := time.NewTicker(time.Second * 3)
+					ticker := time.NewTicker(time.Millisecond * 800)
 					defer ticker.Stop()
-					for {
+					for i := 0; ; i++ {
 						select {
 						case <-ticker.C:
-							tctx, cancel := context.WithTimeout(ctx, time.Second)
-							pong, err := d.Ping(tctx)
-							cancel()
-							if err != nil {
-								if ctx.Err() != nil {
-									return
-								}
-								continue
-							}
 							s.BroadcastEvent("drone-ping", &DronePingMsg{
-								Id:       d.ID(),
-								BootTime: pong.BootTime.UnixMilli(),
-								Ping:     pong.Ping().Microseconds(),
+								Id:           d.ID(),
+								BootTime:     d.GetBootTime().UnixMilli(),
+								Ping:         d.GetPing().Microseconds(),
+								LastActivate: d.LastActivate().UnixMilli(),
 							})
+							if i%10 == 0 {
+								tctx, cancel := context.WithTimeout(ctx, time.Second*3)
+								d.Ping(tctx)
+								cancel()
+							}
 						case <-ctx.Done():
 							return
 						}
@@ -156,13 +153,12 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 			case *drone.EventDroneStatusChanged:
 				d := event.Drone
 				s.BroadcastEvent("drone-info", &DroneStatusMsg{
-					Id:           d.ID(),
-					Status:       d.GetStatus(),
-					Mode:         d.GetMode(),
-					Battery:      d.GetBattery(),
-					Home:         d.GetHome(),
-					LastActivate: d.LastActivate().UnixMilli(),
-					Extra:        d.ExtraInfo(),
+					Id:      d.ID(),
+					Status:  d.GetStatus(),
+					Mode:    d.GetMode(),
+					Battery: d.GetBattery(),
+					Home:    d.GetHome(),
+					Extra:   d.ExtraInfo(),
 				})
 			case *drone.EventDronePositionChanged:
 				d := event.Drone
@@ -172,6 +168,16 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 					GPS:     event.GPS,
 					Rotate:  event.Rotate,
 				})
+			case *drone.EventDroneStatusText:
+				lvl := LevelError
+				if event.Severity == 4 {
+					lvl = LevelWarn
+				} else if event.Severity == 5 || event.Severity == 6 {
+					lvl = LevelInfo
+				} else if event.Severity == 7 {
+					lvl = LevelDebug
+				}
+				s.Logf(lvl, "drone[%d]: %s", event.Drone.ID(), event.Message)
 			}
 		case <-station.Context().Done():
 			return

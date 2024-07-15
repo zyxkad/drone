@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3"
+	"github.com/gorilla/schema"
 
 	"github.com/zyxkad/drone"
 	"github.com/zyxkad/drone/ardupilot"
@@ -97,12 +98,11 @@ func (s *Server) routeDevicesGET(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) {
-	s.mux.Lock()
+	controller := s.Controller()
 	var endpoints []*drone.Endpoint
-	if s.controller != nil {
-		endpoints = s.controller.Endpoints()
+	if controller != nil {
+		endpoints = controller.Endpoints()
 	}
-	s.mux.Unlock()
 	if len(endpoints) == 0 {
 		writeJson(rw, http.StatusOK, nil)
 		return
@@ -249,6 +249,8 @@ func (s *Server) routeSatelliteConfigPOST(rw http.ResponseWriter, req *http.Requ
 
 type Map = map[string]any
 
+var schemaDecoder = schema.NewDecoder()
+
 func parseRequestBody(rw http.ResponseWriter, req *http.Request, ptr any) (parsed bool) {
 	contentType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil {
@@ -260,6 +262,21 @@ func parseRequestBody(rw http.ResponseWriter, req *http.Request, ptr any) (parse
 		return false
 	}
 	switch contentType {
+	case "application/application-x-www-form-urlencoded":
+		if err := req.ParseForm(); err != nil {
+			writeJson(rw, http.StatusBadRequest, Map{
+				"error":   "Cannot parse request body",
+				"message": err.Error(),
+			})
+			return false
+		}
+		if err := schemaDecoder.Decode(ptr, req.PostForm); err != nil {
+			writeJson(rw, http.StatusBadRequest, Map{
+				"error":   "Cannot assign request body",
+				"message": err.Error(),
+			})
+			return false
+		}
 	case "application/json":
 		if err := json.NewDecoder(req.Body).Decode(ptr); err != nil {
 			writeJson(rw, http.StatusBadRequest, Map{

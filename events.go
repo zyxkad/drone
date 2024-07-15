@@ -24,6 +24,32 @@ type Event interface {
 	GetType() string
 }
 
+type EventChannelOpen struct {
+	Endpoint any
+	Channel  string
+}
+
+func (*EventChannelOpen) GetType() string {
+	return "CHANNEL_OPEN"
+}
+
+func (e *EventChannelOpen) String() string {
+	return fmt.Sprintf("<EventChannelOpen endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
+}
+
+type EventChannelClose struct {
+	Endpoint any
+	Channel  string
+}
+
+func (*EventChannelClose) GetType() string {
+	return "CHANNEL_CLOSE"
+}
+
+func (e *EventChannelClose) String() string {
+	return fmt.Sprintf("<EventChannelClose endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
+}
+
 type EventDroneConnected struct {
 	Drone Drone
 }
@@ -89,28 +115,16 @@ func (e *EventDroneMessage) String() string {
 	return fmt.Sprintf("<EventDroneMessage drone=%s message=%v>", e.Drone, e.Message)
 }
 
-type EventChannelOpen struct {
-	Endpoint any
-	Channel  string
+type EventDroneStatusText struct {
+	Drone    Drone
+	Severity int
+	Message  string
 }
 
-func (*EventChannelOpen) GetType() string {
-	return "CHANNEL_OPEN"
+func (*EventDroneStatusText) GetType() string {
+	return "EVENT_DRONE_STATUS_TEXT"
 }
 
-func (e *EventChannelOpen) String() string {
-	return fmt.Sprintf("<EventChannelOpen endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
-}
-
-type EventChannelClose struct {
-	Endpoint any
-	Channel  string
-}
-
-func (*EventChannelClose) GetType() string {
-	return "CHANNEL_CLOSE"
-}
-
-func (e *EventChannelClose) String() string {
-	return fmt.Sprintf("<EventChannelClose endpoint=%#v channel=%s>", e.Endpoint, e.Channel)
+func (e *EventDroneStatusText) String() string {
+	return fmt.Sprintf("<EventDroneStatusText drone=%s message=%q>", e.Drone, e.Message)
 }

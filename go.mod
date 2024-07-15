@@ -7,6 +7,7 @@ require (
 	github.com/bluenviron/gomavlib/v3 v3.0.0
 	github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
 	github.com/go-gnss/rtcm v0.0.6
+	github.com/gorilla/schema v1.4.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/ungerik/go3d v0.0.0-20240502073936-1137f6adf7e9
 	go.bug.st/serial v1.6.2

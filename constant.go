@@ -17,23 +17,50 @@
 package drone
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"math"
 )
 
 var NaN = (float32)(math.NaN())
 
-type DroneStatus string
+type DroneStatus int32
+
+var _ json.Marshaler = (DroneStatus)(0)
 
 const (
-	StatusNone     DroneStatus = "N/A"
-	StatusUnstable DroneStatus = "UNSTABLE"
-	StatusReady    DroneStatus = "READY"
-	StatusSleeping DroneStatus = "SLEEPING"
-	StatusArmed    DroneStatus = "ARMED"
-	StatusTakenoff DroneStatus = "TAKENOFF"
-	StatusNav      DroneStatus = "NAV"
-	StatusError    DroneStatus = "ERROR"
+	StatusNone DroneStatus = iota
+	StatusUnstable
+	StatusReady
+	StatusSleeping
+	StatusArmed
+	StatusTakenoff
+	StatusNav
+	StatusError
 )
+
+func (s DroneStatus) MarshalJSON() ([]byte, error) {
+	switch s {
+	case StatusNone:
+		return ([]byte)(`"N/A"`), nil
+	case StatusUnstable:
+		return ([]byte)(`"UNSTABLE"`), nil
+	case StatusReady:
+		return ([]byte)(`"READY"`), nil
+	case StatusSleeping:
+		return ([]byte)(`"SLEEPING"`), nil
+	case StatusArmed:
+		return ([]byte)(`"ARMED"`), nil
+	case StatusTakenoff:
+		return ([]byte)(`"TAKENOFF"`), nil
+	case StatusNav:
+		return ([]byte)(`"NAV"`), nil
+	case StatusError:
+		return ([]byte)(`"ERROR"`), nil
+	}
+	return nil, errors.New("Unexpected DroneStatus")
+}
 
 type DroneAction string
 
@@ -47,3 +74,22 @@ const (
 	ActionSleep   DroneAction = "SLEEP"
 	ActionWakeup  DroneAction = "WAKEUP"
 )
+
+func (a DroneAction) AsFunc() func(d Drone, ctx context.Context) error {
+	switch a {
+	case ActionArm:
+		return Drone.Arm
+	case ActionDisarm:
+		return Drone.Disarm
+	case ActionHome:
+		return Drone.Home
+	case ActionLand:
+		return Drone.Land
+	case ActionTakeoff:
+		return Drone.Takeoff
+	case ActionHold:
+		return Drone.Hold
+	default:
+		return nil
+	}
+}

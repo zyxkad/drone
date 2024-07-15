@@ -18,6 +18,7 @@ package ardupilot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -36,14 +37,17 @@ type Drone struct {
 	channel    *gomavlib.Channel
 	id         int
 	component  byte
-	bootTime   time.Time
+	bootTime   atomic.Int64 // in µs
 
 	mux sync.RWMutex
 
-	lastActivate  time.Time
+	lastActivate  atomic.Int64 // in ms
 	activeTimeout time.Duration
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
+	timesync1     atomic.Int64
+	timesync2     atomic.Int64
+	pingDur       atomic.Int64 // in µs
 
 	gpsType        common.GPS_FIX_TYPE
 	gps            *drone.Gps
@@ -51,10 +55,9 @@ type Drone struct {
 	satelliteCount int
 	rotate         *drone.Rotate
 	battery        drone.BatteryStat
-	status         drone.DroneStatus
-	customMode     uint32
+	status         atomic.Uint32
+	customMode     atomic.Uint32
 
-	pingAck              chan *common.MessageSystemTime
 	commandAcks          map[common.MAV_CMD]chan *common.MessageCommandAck
 	missionAck           atomic.Pointer[common.MessageMissionAck]
 	missionAckSignal     chan struct{}
@@ -82,11 +85,9 @@ func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) 
 		channel:    channel,
 		id:         id,
 		component:  component,
-		status:     drone.StatusUnstable,
 
 		activeTimeout: time.Second * 3,
 
-		pingAck:              make(chan *common.MessageSystemTime, 1),
 		commandAcks:          make(map[common.MAV_CMD]chan *common.MessageCommandAck),
 		missionAckSignal:     make(chan struct{}),
 		missionReachedSignal: make(chan int32),
@@ -102,7 +103,7 @@ func (d *Drone) String() string {
 		d.id,
 		d.gpsType.String(), d.gps,
 		d.battery,
-		d.customMode)
+		d.customMode.Load())
 }
 
 func (d *Drone) ID() int {
@@ -150,44 +151,53 @@ func (d *Drone) GetBattery() drone.BatteryStat {
 }
 
 func (d *Drone) GetStatus() drone.DroneStatus {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return d.status
+	return (drone.DroneStatus)(d.status.Load())
 }
 
 func (d *Drone) GetMode() int {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return (int)(d.customMode)
+	return (int)(d.customMode.Load())
+}
+
+func (d *Drone) GetPing() time.Duration {
+	return (time.Duration)(d.pingDur.Load()) * time.Nanosecond
+}
+
+func (d *Drone) GetBootTime() time.Time {
+	return time.UnixMicro(d.bootTime.Load())
 }
 
 func (d *Drone) LastActivate() time.Time {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return d.lastActivate
+	return time.UnixMilli(d.lastActivate.Load())
 }
 
 func (d *Drone) ExtraInfo() any {
 	return d.DroneExtraInfo
 }
 
-func (d *Drone) Ping(ctx context.Context) (*drone.Pong, error) {
-	start := time.Now()
-	if err := d.RequestMessageWithType(ctx, (*common.MessageSystemTime)(nil)); err != nil {
-		return nil, err
+func (d *Drone) Ping(ctx context.Context) error {
+	pingMsgs := []message.Message{
+		(*common.MessageSystemTime)(nil),
+		(*common.MessageHomePosition)(nil),
 	}
-	go d.RequestMessageWithType(context.Background(), (*common.MessageHomePosition)(nil))
-	select {
-	case ack := <-d.pingAck:
-		respondTime := time.UnixMicro((int64)(ack.TimeUnixUsec))
-		return &drone.Pong{
-			Duration:    time.Since(start),
-			RespondTime: respondTime,
-			BootTime:    respondTime.Add(-(time.Duration)(ack.TimeBootMs) * time.Millisecond),
-		}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	errCh := make(chan error, len(pingMsgs))
+	for _, msg := range pingMsgs {
+		go func(msg message.Message) {
+			errCh <- d.RequestMessageWithType(ctx, msg)
+		}(msg)
 	}
+	errs := make([]error, 0, 2)
+	for range len(pingMsgs) {
+		select {
+		case err := <-errCh:
+			errs = append(errs, err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.Join(errs...)
 }
 
 func (d *Drone) WriteFrame(msg frame.Frame) error {
@@ -209,21 +219,12 @@ func (d *Drone) SendMessage(msg any) error {
 }
 
 func (d *Drone) handleMessage(msg message.Message) {
-	locked := true
-	unlock := func() {
-		if locked {
-			locked = false
-			d.mux.Unlock()
-		}
-	}
-	d.mux.Lock()
-	defer unlock()
-
-	d.lastActivate = time.Now()
+	now := time.Now()
+	d.lastActivate.Store(now.UnixMilli())
 	if d.inactiveTimer == nil {
 		d.inactiveTimer = time.AfterFunc(d.activeTimeout, func() {
 			if d.alive.CompareAndSwap(true, false) {
-				d.status = drone.StatusNone
+				d.status.Store((uint32)(drone.StatusNone))
 				d.controller.sendEvent(&drone.EventDroneDisconnected{
 					Drone: d,
 				})
@@ -234,42 +235,122 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.inactiveTimer.Reset(d.activeTimeout)
 	}
 	if d.alive.CompareAndSwap(false, true) {
-		d.status = drone.StatusUnstable
+		d.status.Store((uint32)(drone.StatusUnstable))
 		d.controller.sendEvent(&drone.EventDroneConnected{
 			Drone: d,
 		})
 	}
+
 	switch msg := msg.(type) {
 	case *common.MessageHeartbeat:
-		if d.customMode != msg.CustomMode {
-			d.customMode = msg.CustomMode
+		if d.customMode.Load() != msg.CustomMode {
+			d.customMode.Store(msg.CustomMode)
 			d.controller.sendEvent(&drone.EventDroneStatusChanged{
 				Drone: d,
 			})
 		}
+		var newStatus drone.DroneStatus
 		switch msg.SystemStatus {
 		case common.MAV_STATE_UNINIT, common.MAV_STATE_BOOT, common.MAV_STATE_CALIBRATING:
-			d.status = drone.StatusUnstable
+			newStatus = drone.StatusUnstable
 		case common.MAV_STATE_STANDBY:
-			d.status = drone.StatusReady
+			newStatus = drone.StatusReady
 		case common.MAV_STATE_ACTIVE:
 			if msg.BaseMode&common.MAV_MODE_FLAG_SAFETY_ARMED != 0 {
-				d.status = drone.StatusArmed
+				newStatus = drone.StatusArmed
 			} else if msg.BaseMode&(common.MAV_MODE_FLAG_GUIDED_ENABLED|common.MAV_MODE_FLAG_AUTO_ENABLED) != 0 {
-				d.status = drone.StatusNav
+				newStatus = drone.StatusNav
 			} else {
-				d.status = drone.StatusTakenoff
+				newStatus = drone.StatusTakenoff
 			}
 		case common.MAV_STATE_CRITICAL, common.MAV_STATE_EMERGENCY:
-			d.status = drone.StatusError
+			newStatus = drone.StatusError
 		case common.MAV_STATE_POWEROFF, common.MAV_STATE_FLIGHT_TERMINATION:
-			if d.status != drone.StatusError {
-				d.status = drone.StatusSleeping
+			if d.status.Load() != (uint32)(drone.StatusError) {
+				newStatus = drone.StatusSleeping
 			}
 		default:
-			// Should be unreachable
-			d.status = drone.StatusUnstable
+			panic("unexpected SystemStatus")
 		}
+		if d.status.Load() != (uint32)(newStatus) {
+			d.status.Store((uint32)(newStatus))
+		}
+	case *common.MessageTimesync:
+		if msg.Tc1 != 0 {
+			if msg.Ts1 == d.controller.timesyncId.Load() {
+				t1 := d.timesync1.Load()
+				t2 := msg.Tc1 - msg.Ts1
+				d.timesync2.Store(t2)
+				if t1 != 0 {
+					d.pingDur.Store(t2 + t1)
+				}
+			}
+			return
+		}
+		t2 := d.timesync2.Load()
+		t1 := now.UnixNano() - msg.Ts1
+		d.timesync1.Store(t1)
+		if t2 != 0 {
+			d.pingDur.Store(t2 + t1)
+		}
+		d.WriteMessage(&common.MessageTimesync{
+			Tc1:             now.UnixNano(),
+			Ts1:             msg.Ts1,
+			TargetSystem:    (byte)(d.ID()),
+			TargetComponent: d.component,
+		})
+		return
+	case *common.MessageSystemTime:
+		ping := d.pingDur.Load()
+		d.bootTime.Store(now.UnixMicro() - ping - (int64)(msg.TimeBootMs)*1e3) // not msg.TimeUnixUsec because it's not even close (even `now - ping` still not accurate)
+		return
+	case *common.MessageMissionAck:
+		d.missionAck.Store(msg)
+		go func() {
+		NOTIFY_LOOP:
+			for {
+				select {
+				case d.missionAckSignal <- struct{}{}:
+				default:
+					break NOTIFY_LOOP
+				}
+			}
+		}()
+		return
+	case *common.MessageMissionItemReached:
+		seq := (int32)(msg.Seq)
+		d.missionReached.Store(seq)
+		go func() {
+		NOTIFY_LOOP:
+			for {
+				select {
+				case d.missionReachedSignal <- seq:
+				default:
+					break NOTIFY_LOOP
+				}
+			}
+		}()
+		return
+	case *common.MessageStatustext:
+		d.controller.sendEvent(&drone.EventDroneStatusText{
+			Drone:    d,
+			Severity: (int)(msg.Severity),
+			Message:  msg.Text,
+		})
+		return
+	}
+
+	locked := true
+	unlock := func() {
+		if locked {
+			locked = false
+			d.mux.Unlock()
+		}
+	}
+	d.mux.Lock()
+	defer unlock()
+
+	switch msg := msg.(type) {
 	case *common.MessageSysStatus:
 		var batteryStat drone.BatteryStat
 		if msg.VoltageBattery == ^(uint16)(0) {
@@ -304,11 +385,6 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.home = drone.GPSFromWGS84(msg.Latitude, msg.Longitude, msg.Altitude)
 	case *common.MessageAttitude:
 		d.rotate = drone.RotateFromPi(msg.Roll, msg.Pitch, msg.Yaw)
-	case *common.MessageSystemTime:
-		select {
-		case d.pingAck <- msg:
-		default:
-		}
 	case *common.MessageCommandAck:
 		if ch, ok := d.commandAcks[msg.Command]; ok {
 			if msg.Result != common.MAV_RESULT_IN_PROGRESS {
@@ -318,30 +394,5 @@ func (d *Drone) handleMessage(msg message.Message) {
 				ch <- msg
 			}()
 		}
-	case *common.MessageMissionAck:
-		d.missionAck.Store(msg)
-		go func() {
-		NOTIFY_LOOP:
-			for {
-				select {
-				case d.missionAckSignal <- struct{}{}:
-				default:
-					break NOTIFY_LOOP
-				}
-			}
-		}()
-	case *common.MessageMissionItemReached:
-		seq := (int32)(msg.Seq)
-		d.missionReached.Store(seq)
-		go func() {
-		NOTIFY_LOOP:
-			for {
-				select {
-				case d.missionReachedSignal <- seq:
-				default:
-					break NOTIFY_LOOP
-				}
-			}
-		}()
 	}
 }

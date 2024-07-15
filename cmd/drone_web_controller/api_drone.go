@@ -17,19 +17,142 @@
 package main
 
 import (
-	// "encoding/json"
-	// "mime"
-	// "net/http"
-	// "strconv"
-	// "time"
+	"net/http"
 
-	// "github.com/bluenviron/gomavlib/v3"
-
-	// "github.com/zyxkad/drone"
-	// "github.com/zyxkad/drone/ardupilot"
+	"github.com/zyxkad/drone"
 )
 
 func (s *Server) buildAPIDroneRoute() {
-	// s.route.HandleFunc("POST /api/drone/action", s.routeDroneAction)
-	// s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
+	s.route.HandleFunc("POST /api/drone/action", s.routeDroneAction)
+	s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
+}
+
+type MultiOpResp struct {
+	Targets int `json:"targets"`
+	Failed  int `json:"failed"`
+}
+
+func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
+	var payload struct {
+		Action drone.DroneAction `json:"action"`
+		Drones []int             `json:"d"`
+	}
+	if !parseRequestBody(rw, req, &payload) {
+		return
+	}
+	controller := s.Controller()
+	if controller == nil {
+		writeJson(rw, http.StatusConflict, Map{
+			"error": "ControllerNotExist",
+		})
+		return
+	}
+	action := payload.Action.AsFunc()
+	if action == nil {
+		writeJson(rw, http.StatusBadRequest, Map{
+			"error": "UnsupportedAction",
+		})
+		return
+	}
+	ctx := req.Context()
+	count := 0
+	errCh := make(chan error, 0)
+	if payload.Drones == nil {
+		for _, d := range controller.Drones() {
+			count++
+			go func(d drone.Drone) {
+				select {
+				case errCh <- action(d, ctx):
+				case <-ctx.Done():
+				}
+			}(d)
+		}
+	} else {
+		for _, id := range payload.Drones {
+			d := controller.GetDrone(id)
+			if d != nil {
+				count++
+				go func(d drone.Drone) {
+					select {
+					case errCh <- action(d, ctx):
+					case <-ctx.Done():
+					}
+				}(d)
+			}
+		}
+	}
+	var errs []error
+	for range count {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+	writeJson(rw, http.StatusOK, MultiOpResp{
+		Targets: count,
+		Failed:  len(errs),
+	})
+}
+
+func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
+	var payload struct {
+		Mode   int   `json:"mode"`
+		Drones []int `json:"d"`
+	}
+	if !parseRequestBody(rw, req, &payload) {
+		return
+	}
+	controller := s.Controller()
+	if controller == nil {
+		writeJson(rw, http.StatusConflict, Map{
+			"error": "ControllerNotExist",
+		})
+		return
+	}
+	ctx := req.Context()
+	count := 0
+	errCh := make(chan error, 0)
+	if payload.Drones == nil {
+		for _, d := range controller.Drones() {
+			count++
+			go func(d drone.Drone) {
+				select {
+				case errCh <- d.UpdateMode(ctx, payload.Mode):
+				case <-ctx.Done():
+				}
+			}(d)
+		}
+	} else {
+		for _, id := range payload.Drones {
+			d := controller.GetDrone(id)
+			if d != nil {
+				count++
+				go func(d drone.Drone) {
+					select {
+					case errCh <- d.UpdateMode(ctx, payload.Mode):
+					case <-ctx.Done():
+					}
+				}(d)
+			}
+		}
+	}
+	var errs []error
+	for range count {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+	writeJson(rw, http.StatusOK, MultiOpResp{
+		Targets: count,
+		Failed:  len(errs),
+	})
 }

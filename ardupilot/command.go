@@ -27,7 +27,7 @@ import (
 	"github.com/zyxkad/drone"
 )
 
-var errCommandInProgress = errors.New("Command in progress")
+var errCommandPending = errors.New("Command pending")
 
 func (d *Drone) sendCommandIntCh(
 	frame common.MAV_FRAME,
@@ -38,7 +38,7 @@ func (d *Drone) sendCommandIntCh(
 	d.mux.Lock()
 	defer d.mux.Unlock()
 	if _, ok := d.commandAcks[cmd]; ok {
-		return nil, errCommandInProgress
+		return nil, errCommandPending
 	}
 	if err := d.SendMessage(&common.MessageCommandInt{
 		TargetSystem:    (uint8)(d.id),
@@ -68,7 +68,7 @@ func (d *Drone) sendCommandLongCh(
 	d.mux.Lock()
 	defer d.mux.Unlock()
 	if _, ok := d.commandAcks[cmd]; ok {
-		return nil, errors.New("Command in progress")
+		return nil, errCommandPending
 	}
 	if err := d.sendCommandLongMessage(cmd, confirm, arg1, arg2, arg3, arg4, arg5, arg6, arg7); err != nil {
 		return nil, err
@@ -234,7 +234,13 @@ func (d *Drone) RequestMessageWithType(ctx context.Context, msg message.Message)
 	return d.RequestMessage(ctx, msg.GetID())
 }
 
-func (d *Drone) SetHome(ctx context.Context, pos *drone.Gps) error {
+func (d *Drone) UpdateMode(ctx context.Context, mode int) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_DO_SET_MODE,
+		0 /* TODO: set MAV_MODE? */, (float32)(mode), 0,
+		0, 0, 0, 0)
+}
+
+func (d *Drone) UpdateHome(ctx context.Context, pos *drone.Gps) error {
 	if pos == nil {
 		return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_SET_HOME, 1,
 			0, 0, 0, 0, 0, 0)

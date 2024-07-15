@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 
 	"github.com/ungerik/go3d/vec3"
 
@@ -90,10 +89,5 @@ func (s *SkyC) GenerateHomeGPSList(origin *drone.Gps, heading float32) []*drone.
 		g.MoveToEast(h[1]*s - h[0]*c)
 		m[i] = g
 	}
-	// sort.Slice(m, func(i, j int) bool {
-	// 	d1 := origin.DistanceToNoAlt(m[i])
-	// 	d2 := origin.DistanceToNoAlt(m[j])
-	// 	return d1 > d2 || (d1 == d2 && m[i].Alt < m[j].Alt)
-	// })
 	return m
 }
