@@ -121,7 +121,7 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 				ctx, cancel := context.WithCancel(context.Background())
 				pingTickers[d.ID()] = cancel
 				go func(ctx context.Context, d drone.Drone) {
-					ticker := time.NewTicker(time.Millisecond * 800)
+					ticker := time.NewTicker(time.Millisecond * 500)
 					defer ticker.Stop()
 					for i := 0; ; i++ {
 						select {
@@ -132,7 +132,7 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 								Ping:         d.GetPing().Microseconds(),
 								LastActivate: d.LastActivate().UnixMilli(),
 							})
-							if i%10 == 0 {
+							if i%20 == 0 {
 								tctx, cancel := context.WithTimeout(ctx, time.Second*3)
 								d.Ping(tctx)
 								cancel()

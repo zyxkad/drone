@@ -28,8 +28,9 @@ func (s *Server) buildAPIDroneRoute() {
 }
 
 type MultiOpResp struct {
-	Targets int `json:"targets"`
-	Failed  int `json:"failed"`
+	Targets int      `json:"targets"`
+	Failed  int      `json:"failed"`
+	Errors  []string `json:"errors"`
 }
 
 func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
@@ -81,12 +82,12 @@ func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	var errs []error
+	errs := make([]string, 0, 2)
 	for range count {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, err.Error())
 			}
 		case <-ctx.Done():
 			return
@@ -95,6 +96,7 @@ func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
 	writeJson(rw, http.StatusOK, MultiOpResp{
 		Targets: count,
 		Failed:  len(errs),
+		Errors:  errs,
 	})
 }
 
@@ -140,12 +142,12 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	var errs []error
+	errs := make([]string, 0, 2)
 	for range count {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, err.Error())
 			}
 		case <-ctx.Done():
 			return
@@ -154,5 +156,6 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 	writeJson(rw, http.StatusOK, MultiOpResp{
 		Targets: count,
 		Failed:  len(errs),
+		Errors:  errs,
 	})
 }

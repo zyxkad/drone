@@ -17,8 +17,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -112,4 +115,15 @@ func (s *Server) ToastAndLogf(level LogLevel, title string, format string, args 
 		Msg:   msg,
 		Life:  3000,
 	})
+}
+
+func openLogFile(dir string) (fd *os.File, err error) {
+	baseName := time.Now().Format("2006-01-02-15.%d.log")
+	for i := 1; i < 1000; i++ {
+		fd, err = os.OpenFile(filepath.Join(dir, fmt.Sprintf(baseName, i)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if !errors.Is(err, os.ErrExist) {
+			return
+		}
+	}
+	return
 }

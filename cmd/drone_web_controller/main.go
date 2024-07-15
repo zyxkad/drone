@@ -19,12 +19,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 )
 
 var (
 	addr string = "localhost:5050"
+)
+
+var (
+	logDir = "log"
 )
 
 func parseFlags() {
@@ -34,12 +40,27 @@ func parseFlags() {
 
 func main() {
 	parseFlags()
-	subCmd := flag.Arg(1)
+	subCmd := flag.Arg(0)
 	if subCmd == "license" {
 		fmt.Println(LICENSE_LONG)
 		return
 	}
 	fmt.Print(LICENSE_SHORT)
+
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	{
+		logWriters := []io.Writer{os.Stderr}
+		os.Mkdir(logDir, 0755)
+		logFile, logFileErr := openLogFile(logDir)
+		if logFile != nil {
+			logWriters = append(logWriters, logFile)
+		}
+		log.SetOutput(io.MultiWriter(logWriters...))
+		if logFileErr != nil {
+			log.Println("Error when opening log file:", logFileErr)
+		}
+	}
+
 	server := NewServer()
 	log.Println("Server starting at", "http://"+addr)
 	err := http.ListenAndServe(addr, server.Handler())

@@ -56,7 +56,7 @@ func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
 
 func (d *Drone) Takeoff(ctx context.Context) error {
 	d.mux.Lock()
-	d.home = d.gps.Clone()
+	d.home = d.gps.Load()
 	d.mux.Unlock()
 	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_NAV_TAKEOFF,
 		0, 0, 0,
@@ -64,7 +64,13 @@ func (d *Drone) Takeoff(ctx context.Context) error {
 }
 
 func (d *Drone) Land(ctx context.Context) error {
-	return d.LandAt(ctx, d.GetHome())
+	pos := d.GetGPS()
+	if pos == nil {
+		return errors.New("Drone position is undefined")
+	}
+	pos = pos.Clone()
+	pos.Alt = 0
+	return d.LandAt(ctx, pos)
 }
 
 func (d *Drone) LandAt(ctx context.Context, pos *drone.Gps) error {

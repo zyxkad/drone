@@ -95,7 +95,7 @@ func (s *Client) RunForward(c drone.Controller, eventCh <-chan drone.Event) erro
 			}
 			bufw.Reset()
 			writer, err := frame.NewWriter(frame.WriterConf{
-				Writer:         bufw,
+				Writer: bufw,
 				// The OutXXX does not affect WriteFrame
 				OutVersion:     frame.V2,
 				OutSystemID:    (byte)(id),

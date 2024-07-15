@@ -50,7 +50,7 @@ type Drone struct {
 	pingDur       atomic.Int64 // in µs
 
 	gpsType        common.GPS_FIX_TYPE
-	gps            *drone.Gps
+	gps            atomic.Pointer[drone.Gps]
 	home           *drone.Gps
 	satelliteCount int
 	rotate         *drone.Rotate
@@ -101,7 +101,7 @@ func (d *Drone) String() string {
 	defer d.mux.RUnlock()
 	return fmt.Sprintf("<ardupilot.Drone id=%d gpsType=%s gps=[%s] battery=%s mode=%d>",
 		d.id,
-		d.gpsType.String(), d.gps,
+		d.gpsType.String(), d.gps.Load(),
 		d.battery,
 		d.customMode.Load())
 }
@@ -121,9 +121,7 @@ func (d *Drone) GetGPSType() int {
 }
 
 func (d *Drone) GetGPS() *drone.Gps {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return d.gps
+	return d.gps.Load()
 }
 
 func (d *Drone) GetHome() *drone.Gps {
@@ -375,11 +373,12 @@ func (d *Drone) handleMessage(msg message.Message) {
 	case *common.MessageGpsRawInt:
 		d.gpsType = msg.FixType
 	case *common.MessageGlobalPositionInt:
-		d.gps = drone.GPSFromWGS84(msg.Lat, msg.Lon, msg.Alt)
+		pos := drone.GPSFromWGS84(msg.Lat, msg.Lon, msg.Alt)
+		d.gps.Store(pos)
 		d.controller.sendEvent(&drone.EventDronePositionChanged{
 			Drone:   d,
 			GPSType: (int)(d.gpsType),
-			GPS:     d.gps,
+			GPS:     pos,
 		})
 	case *common.MessageHomePosition:
 		d.home = drone.GPSFromWGS84(msg.Latitude, msg.Longitude, msg.Altitude)
