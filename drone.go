@@ -18,13 +18,10 @@ package drone
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
 
 type Drone interface {
-	fmt.Stringer
-
 	ID() int
 	Name() string
 	GetGPSType() int
@@ -32,7 +29,7 @@ type Drone interface {
 	GetHome() *Gps
 	GetSatelliteCount() int // -1 means invalid
 	GetRotate() *Rotate
-	GetBattery() BatteryStat
+	GetBattery() *BatteryStat
 	GetMode() int
 	GetStatus() DroneStatus
 	GetPing() time.Duration
@@ -63,26 +60,22 @@ type Drone interface {
 	// StartMission run the mission items in the range [startIndex, endIndex]
 	StartMission(ctx context.Context, startIndex, endIndex int) error
 	// id is the waypoint index set by SetMission
-	WaitUntilReached(ctx context.Context, id int) error
+	WaitUntilArrived(ctx context.Context, id int) error
+	WaitUntilReached(ctx context.Context, pos *Gps, radius float32) error
+	WaitUntilReady(ctx context.Context) error
 }
 
-type BatteryStat struct {
-	Voltage   float32 `json:"voltage"`   // In V
-	Current   float32 `json:"current"`   // In A
-	Remaining float32 `json:"remaining"` // In %
+type CommandExt interface {
+	ExecuteCommand(ctx context.Context, cmd int, args ...float32) error
 }
 
-func (s BatteryStat) String() string {
-	return fmt.Sprintf("{%.03fV %.03fA %.1f%%}", s.Voltage, s.Current, s.Remaining*100)
+type LEDExt interface {
+	GetLED() Color
+	ActiveLED(ctx context.Context, color Color, dur time.Duration) error
+	ResetLED(ctx context.Context) error
 }
 
-type Pong struct {
-	Duration    time.Duration
-	RespondTime time.Time
-	BootTime    time.Time
-}
-
-// Get the ping time (usually half of the ping-pong duration)
-func (p *Pong) Ping() time.Duration {
-	return p.Duration / 2
+type BuzzerExt interface {
+	GetBuzzFormats() []string
+	Buzz(ctx context.Context, format string, data []byte) error
 }

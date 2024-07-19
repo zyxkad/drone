@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3"
+	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/frame"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
@@ -45,19 +46,18 @@ type Drone struct {
 	activeTimeout time.Duration
 	inactiveTimer *time.Timer
 	alive         atomic.Bool
-	timesync1     atomic.Int64
-	timesync2     atomic.Int64
 	pingDur       atomic.Int64 // in µs
 
 	gpsType        common.GPS_FIX_TYPE
 	gps            atomic.Pointer[drone.Gps]
 	home           *drone.Gps
 	satelliteCount int
-	rotate         *drone.Rotate
-	battery        drone.BatteryStat
+	rotate         atomic.Pointer[drone.Rotate]
+	battery        atomic.Pointer[drone.BatteryStat]
 	status         atomic.Uint32
 	customMode     atomic.Uint32
 
+	requestingMsg        map[uint32]chan message.Message
 	commandAcks          map[common.MAV_CMD]chan *common.MessageCommandAck
 	missionAck           atomic.Pointer[common.MessageMissionAck]
 	missionAckSignal     chan struct{}
@@ -67,16 +67,17 @@ type Drone struct {
 	DroneExtraInfo
 }
 
-var _ drone.Drone = (*Drone)(nil)
+var (
+	_ drone.Drone  = (*Drone)(nil)
+	_ drone.LEDExt = (*Drone)(nil)
+)
 
 type DroneExtraInfo struct {
-	LED ColorInfo `json:"LED"`
-}
-
-type ColorInfo struct {
-	R byte `json:"r"`
-	G byte `json:"g"`
-	B byte `json:"b"`
+	LED           drone.Color `json:"LED"`
+	Freemem       uint16      `json:"freemem"`
+	WindDirection float32     `json:"wind-direction"`
+	WindSpeed     float32     `json:"wind-speed"`
+	WindSpeedZ    float32     `json:"wind-speed-z"`
 }
 
 func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) *Drone {
@@ -88,10 +89,12 @@ func newDrone(c *Controller, channel *gomavlib.Channel, id int, component byte) 
 
 		activeTimeout: time.Second * 3,
 
+		requestingMsg:        make(map[uint32]chan message.Message),
 		commandAcks:          make(map[common.MAV_CMD]chan *common.MessageCommandAck),
 		missionAckSignal:     make(chan struct{}),
 		missionReachedSignal: make(chan int32),
 	}
+	d.battery.Store(&drone.BatteryStat{Voltage: -1, Current: -1, Remaining: -1})
 	d.missionReached.Store(-1)
 	return d
 }
@@ -102,7 +105,7 @@ func (d *Drone) String() string {
 	return fmt.Sprintf("<ardupilot.Drone id=%d gpsType=%s gps=[%s] battery=%s mode=%d>",
 		d.id,
 		d.gpsType.String(), d.gps.Load(),
-		d.battery,
+		d.battery.Load(),
 		d.customMode.Load())
 }
 
@@ -137,15 +140,11 @@ func (d *Drone) GetSatelliteCount() int {
 }
 
 func (d *Drone) GetRotate() *drone.Rotate {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return d.rotate
+	return d.rotate.Load()
 }
 
-func (d *Drone) GetBattery() drone.BatteryStat {
-	d.mux.RLock()
-	defer d.mux.RUnlock()
-	return d.battery
+func (d *Drone) GetBattery() *drone.BatteryStat {
+	return d.battery.Load()
 }
 
 func (d *Drone) GetStatus() drone.DroneStatus {
@@ -172,30 +171,28 @@ func (d *Drone) ExtraInfo() any {
 	return d.DroneExtraInfo
 }
 
+func (d *Drone) GetLED() drone.Color {
+	return d.LED
+}
+
 func (d *Drone) Ping(ctx context.Context) error {
 	pingMsgs := []message.Message{
 		(*common.MessageSystemTime)(nil),
 		(*common.MessageHomePosition)(nil),
 	}
-	errCh := make(chan error, len(pingMsgs))
-	for _, msg := range pingMsgs {
-		go func(msg message.Message) {
-			errCh <- d.RequestMessageWithType(ctx, msg)
-		}(msg)
-	}
 	errs := make([]error, 0, 2)
-	for range len(pingMsgs) {
-		select {
-		case err := <-errCh:
+	for _, msg := range pingMsgs {
+		if err := d.SendRequestMessageWithType(ctx, msg); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			errs = append(errs, err)
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
-	if len(errs) == 0 {
-		return nil
+	if len(errs) != 0 {
+		return errors.Join(errs...)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func (d *Drone) WriteFrame(msg frame.Frame) error {
@@ -247,20 +244,20 @@ func (d *Drone) handleMessage(msg message.Message) {
 				Drone: d,
 			})
 		}
-		var newStatus drone.DroneStatus
+		var newStatus drone.DroneStatus = -1
 		switch msg.SystemStatus {
 		case common.MAV_STATE_UNINIT, common.MAV_STATE_BOOT, common.MAV_STATE_CALIBRATING:
 			newStatus = drone.StatusUnstable
 		case common.MAV_STATE_STANDBY:
 			newStatus = drone.StatusReady
 		case common.MAV_STATE_ACTIVE:
-			if msg.BaseMode&common.MAV_MODE_FLAG_SAFETY_ARMED != 0 {
-				newStatus = drone.StatusArmed
-			} else if msg.BaseMode&(common.MAV_MODE_FLAG_GUIDED_ENABLED|common.MAV_MODE_FLAG_AUTO_ENABLED) != 0 {
-				newStatus = drone.StatusNav
-			} else {
-				newStatus = drone.StatusTakenoff
-			}
+			// if msg.BaseMode&common.MAV_MODE_FLAG_SAFETY_ARMED != 0 {
+			// 	newStatus = drone.StatusArmed
+			// } else if msg.BaseMode&(common.MAV_MODE_FLAG_GUIDED_ENABLED|common.MAV_MODE_FLAG_AUTO_ENABLED) != 0 {
+			// 	newStatus = drone.StatusNav
+			// } else {
+			// 	newStatus = drone.StatusTakenoff
+			// }
 		case common.MAV_STATE_CRITICAL, common.MAV_STATE_EMERGENCY:
 			newStatus = drone.StatusError
 		case common.MAV_STATE_POWEROFF, common.MAV_STATE_FLIGHT_TERMINATION:
@@ -270,26 +267,15 @@ func (d *Drone) handleMessage(msg message.Message) {
 		default:
 			panic("unexpected SystemStatus")
 		}
-		if d.status.Load() != (uint32)(newStatus) {
+		if newStatus != -1 && d.status.Load() != (uint32)(newStatus) {
 			d.status.Store((uint32)(newStatus))
 		}
+		return
 	case *common.MessageTimesync:
 		if msg.Tc1 != 0 {
-			if msg.Ts1 == d.controller.timesyncId.Load() {
-				t1 := d.timesync1.Load()
-				t2 := msg.Tc1 - msg.Ts1
-				d.timesync2.Store(t2)
-				if t1 != 0 {
-					d.pingDur.Store(t2 + t1)
-				}
-			}
+			rt := now.UnixNano() - msg.Ts1
+			d.pingDur.Store(rt / 2)
 			return
-		}
-		t2 := d.timesync2.Load()
-		t1 := now.UnixNano() - msg.Ts1
-		d.timesync1.Store(t1)
-		if t2 != 0 {
-			d.pingDur.Store(t2 + t1)
 		}
 		d.WriteMessage(&common.MessageTimesync{
 			Tc1:             now.UnixNano(),
@@ -301,6 +287,41 @@ func (d *Drone) handleMessage(msg message.Message) {
 	case *common.MessageSystemTime:
 		ping := d.pingDur.Load()
 		d.bootTime.Store(now.UnixMicro() - ping - (int64)(msg.TimeBootMs)*1e3) // not msg.TimeUnixUsec because it's not even close (even `now - ping` still not accurate)
+		return
+	case *common.MessageSysStatus:
+		// println("load:", msg.Load)
+		return
+	case *common.MessageBatteryStatus:
+		batteryStat := &drone.BatteryStat{
+			Voltage:   -1,
+			Current:   -1,
+			Remaining: -1,
+		}
+		if msg.Voltages[0] != ^(uint16)(0) {
+			batteryStat.Voltage = (float32)(msg.Voltages[0]) / 1000
+		}
+		if msg.CurrentBattery >= 0 {
+			batteryStat.Current = (float32)(msg.CurrentBattery) / 100
+		}
+		if msg.CurrentConsumed >= 0 {
+			batteryStat.Remaining = (float32)(msg.BatteryRemaining) / 100
+		}
+		d.battery.Store(batteryStat)
+		d.controller.sendEvent(&drone.EventDroneStatusChanged{
+			Drone: d,
+		})
+		return
+	case *common.MessageGlobalPositionInt:
+		pos := drone.GPSFromWGS84(msg.Lat, msg.Lon, msg.Alt)
+		d.gps.Store(pos)
+		d.controller.sendEvent(&drone.EventDronePositionChanged{
+			Drone:   d,
+			GPSType: (int)(d.gpsType),
+			GPS:     pos,
+		})
+		return
+	case *common.MessageAttitude:
+		d.rotate.Store(drone.RotateFromPi(msg.Roll, msg.Pitch, msg.Yaw))
 		return
 	case *common.MessageMissionAck:
 		d.missionAck.Store(msg)
@@ -338,52 +359,15 @@ func (d *Drone) handleMessage(msg message.Message) {
 		return
 	}
 
-	locked := true
-	unlock := func() {
-		if locked {
-			locked = false
-			d.mux.Unlock()
-		}
-	}
 	d.mux.Lock()
-	defer unlock()
+	defer d.mux.Unlock()
 
 	switch msg := msg.(type) {
-	case *common.MessageSysStatus:
-		var batteryStat drone.BatteryStat
-		if msg.VoltageBattery == ^(uint16)(0) {
-			batteryStat.Voltage = -1
-		} else {
-			batteryStat.Voltage = (float32)(msg.VoltageBattery) / 1000
-		}
-		if msg.CurrentBattery == -1 {
-			batteryStat.Current = -1
-		} else {
-			batteryStat.Current = (float32)(msg.CurrentBattery) / 1000
-		}
-		if msg.BatteryRemaining == -1 {
-			batteryStat.Remaining = -1
-		} else {
-			batteryStat.Remaining = (float32)(msg.BatteryRemaining) / 100
-		}
-		d.battery = batteryStat
-		d.controller.sendEvent(&drone.EventDroneStatusChanged{
-			Drone: d,
-		})
 	case *common.MessageGpsRawInt:
 		d.gpsType = msg.FixType
-	case *common.MessageGlobalPositionInt:
-		pos := drone.GPSFromWGS84(msg.Lat, msg.Lon, msg.Alt)
-		d.gps.Store(pos)
-		d.controller.sendEvent(&drone.EventDronePositionChanged{
-			Drone:   d,
-			GPSType: (int)(d.gpsType),
-			GPS:     pos,
-		})
+		d.satelliteCount = (int)(msg.SatellitesVisible)
 	case *common.MessageHomePosition:
 		d.home = drone.GPSFromWGS84(msg.Latitude, msg.Longitude, msg.Altitude)
-	case *common.MessageAttitude:
-		d.rotate = drone.RotateFromPi(msg.Roll, msg.Pitch, msg.Yaw)
 	case *common.MessageCommandAck:
 		if ch, ok := d.commandAcks[msg.Command]; ok {
 			if msg.Result != common.MAV_RESULT_IN_PROGRESS {
@@ -393,5 +377,11 @@ func (d *Drone) handleMessage(msg message.Message) {
 				ch <- msg
 			}()
 		}
+	case *ardupilotmega.MessageMeminfo:
+		d.Freemem = msg.Freemem
+	case *ardupilotmega.MessageWind:
+		d.WindDirection = msg.Direction
+		d.WindSpeed = msg.Speed
+		d.WindSpeedZ = msg.SpeedZ
 	}
 }

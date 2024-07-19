@@ -47,7 +47,6 @@ type Controller struct {
 	cancel    context.CancelCauseFunc
 
 	bootTime     time.Time
-	timesyncId   atomic.Int64
 	rtcmSeqCount atomic.Uint32
 }
 
@@ -229,7 +228,6 @@ func (c *Controller) sendCyclePackets() {
 				Tc1: 0,
 				Ts1: now,
 			})
-			c.timesyncId.Store(now)
 		}
 	}
 }

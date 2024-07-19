@@ -23,16 +23,16 @@ import (
 	"github.com/LiterMC/go-aws"
 
 	"github.com/zyxkad/drone"
-	"github.com/zyxkad/drone/cvt2udp"
+	"github.com/zyxkad/drone/ext/cvt2udp"
 )
 
 type DroneStatusMsg struct {
-	Id      int               `json:"id"`
-	Status  drone.DroneStatus `json:"status"`
-	Mode    int               `json:"mode"`
-	Battery drone.BatteryStat `json:"battery"`
-	Home    *drone.Gps        `json:"home"`
-	Extra   any               `json:"extra"`
+	Id      int                `json:"id"`
+	Status  drone.DroneStatus  `json:"status"`
+	Mode    int                `json:"mode"`
+	Battery *drone.BatteryStat `json:"battery"`
+	Home    *drone.Gps         `json:"home"`
+	Extra   any                `json:"extra"`
 }
 
 type DronePositionMsg struct {
@@ -51,16 +51,16 @@ type DronePingMsg struct {
 
 func (s *Server) sendDroneList(ws *aws.WebSocket) error {
 	type DroneInfo struct {
-		Id           int               `json:"id"`
-		Status       drone.DroneStatus `json:"status"`
-		Mode         int               `json:"mode"`
-		Battery      drone.BatteryStat `json:"battery"`
-		LastActivate int64             `json:"lastActivate"`
-		Extra        any               `json:"extra"`
-		GPSType      int               `json:"gpsType"`
-		GPS          *drone.Gps        `json:"gps"`
-		Home         *drone.Gps        `json:"home"`
-		Rotate       *drone.Rotate     `json:"rotate"`
+		Id           int                `json:"id"`
+		Status       drone.DroneStatus  `json:"status"`
+		Mode         int                `json:"mode"`
+		Battery      *drone.BatteryStat `json:"battery"`
+		LastActivate int64              `json:"lastActivate"`
+		Extra        any                `json:"extra"`
+		GPSType      int                `json:"gpsType"`
+		GPS          *drone.Gps         `json:"gps"`
+		Home         *drone.Gps         `json:"home"`
+		Rotate       *drone.Rotate      `json:"rotate"`
 	}
 	s.mux.RLock()
 	controller := s.controller

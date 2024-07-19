@@ -26,6 +26,8 @@ import (
 	"github.com/zyxkad/drone"
 )
 
+// Arm arms the drone after prearm checks
+// Drone will automaticly disarm after a period
 func (d *Drone) Arm(ctx context.Context) error {
 	return d.arm(ctx, 0)
 }
@@ -35,7 +37,11 @@ func (d *Drone) ForceArm(ctx context.Context) error {
 }
 
 func (d *Drone) arm(ctx context.Context, param2 float32) error {
-	return d.armOrDisarm(ctx, 1, param2)
+	if err := d.armOrDisarm(ctx, 1, param2); err != nil {
+		return err
+	}
+	d.status.Store((uint32)(drone.StatusArmed))
+	return nil
 }
 
 func (d *Drone) Disarm(ctx context.Context) error {
@@ -54,53 +60,58 @@ func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
 	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_COMPONENT_ARM_DISARM, param1, param2, 0, 0, 0, 0, 0)
 }
 
+// Takeoff should be called in POSHOLD or GUIDED mode
 func (d *Drone) Takeoff(ctx context.Context) error {
-	d.mux.Lock()
-	d.home = d.gps.Load()
-	d.mux.Unlock()
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_NAV_TAKEOFF,
+	if err := d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_NAV_TAKEOFF,
 		0, 0, 0,
-		drone.NaN, 0, 0, -1)
+		drone.NaN, 0, 0, 2.5); err != nil {
+		return err
+	}
+	d.status.Store((uint32)(drone.StatusTakenoff))
+	return nil
 }
 
 func (d *Drone) Land(ctx context.Context) error {
-	pos := d.GetGPS()
-	if pos == nil {
-		return errors.New("Drone position is undefined")
-	}
-	pos = pos.Clone()
-	pos.Alt = 0
-	return d.LandAt(ctx, pos)
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_NAV_LAND,
+		0, 0, 0, 0,
+		0, 0, 0)
 }
 
-func (d *Drone) LandAt(ctx context.Context, pos *drone.Gps) error {
-	var yaw float32 = drone.NaN
-	lat, lon := pos.ToWGS84()
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_NAV_LAND,
-		0, (float32)(common.PRECISION_LAND_MODE_OPPORTUNISTIC), 0,
-		yaw, lat, lon, pos.Alt)
+func (d *Drone) WaitUntilReady(ctx context.Context) error {
+	for d.status.Load() != (uint32)(drone.StatusReady) {
+		select {
+		case <-time.After(time.Millisecond * 100):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 func (d *Drone) Home(ctx context.Context) error {
-	lat, lon := d.GetHome().ToWGS84()
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL_RELATIVE_ALT, common.MAV_CMD_NAV_LAND,
-		0, (float32)(common.PRECISION_LAND_MODE_OPPORTUNISTIC), 0,
-		drone.NaN, lat, lon, 0)
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_NAV_RETURN_TO_LAUNCH,
+		0, 0, 0, 0, 0, 0, 0)
 }
 
 func (d *Drone) Hold(ctx context.Context) error {
-	var yaw float32 = drone.NaN
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_BODY_FRD, common.MAV_CMD_OVERRIDE_GOTO,
-		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_CURRENT_POSITION),
-		0, yaw, 0, 0, 0)
+	return d.pauseOrContinue(ctx, 0)
+}
+
+func (d *Drone) Continue(ctx context.Context) error {
+	return d.pauseOrContinue(ctx, 1)
+}
+
+func (d *Drone) pauseOrContinue(ctx context.Context, param1 float32) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_DO_PAUSE_CONTINUE,
+		param1,
+		0, 0, 0, 0, 0, 0)
 }
 
 func (d *Drone) HoldAt(ctx context.Context, pos *drone.Gps) error {
 	var yaw float32 = drone.NaN
 	lat, lon := pos.ToWGS84()
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_OVERRIDE_GOTO,
-		(float32)(common.MAV_GOTO_DO_HOLD), (float32)(common.MAV_GOTO_HOLD_AT_SPECIFIED_POSITION),
-		(float32)(common.MAV_FRAME_GLOBAL),
+	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_REPOSITION,
+		-1, (float32)(common.MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), 0,
 		yaw, lat, lon, pos.Alt)
 }
 
@@ -143,7 +154,7 @@ func (d *Drone) StartMission(ctx context.Context, startId, endId int) error {
 	return nil
 }
 
-func (d *Drone) WaitUntilReached(ctx context.Context, id int) error {
+func (d *Drone) WaitUntilArrived(ctx context.Context, id int) error {
 	ack := d.missionAck.Load()
 	for ack == nil {
 		select {
@@ -178,6 +189,17 @@ func (d *Drone) WaitUntilReached(ctx context.Context, id int) error {
 			} else {
 				reached = reached2
 			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (d *Drone) WaitUntilReached(ctx context.Context, target *drone.Gps, radius float32) error {
+	for d.GetGPS().DistanceTo(target) > radius {
+		select {
+		case <-time.After(time.Millisecond * 250):
 		case <-ctx.Done():
 			return ctx.Err()
 		}

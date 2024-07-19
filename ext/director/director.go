@@ -19,10 +19,14 @@ package director
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"time"
 
 	"github.com/zyxkad/drone"
 )
+
+type InspectorFunc = func(ctx context.Context, dr drone.Drone, logger func(string)) error
 
 // Director directs drone swarm to a set of points
 // Director is not thread-safe. Invoker should ensure the use of Director is atomic
@@ -32,12 +36,14 @@ type Director struct {
 	origin     *drone.Gps
 	points     []*drone.Gps
 	arrived    []drone.Drone
+	assigning  drone.Drone
+	inspectors []InspectorFunc
 }
 
 func NewDirector(controller drone.Controller, origin *drone.Gps, points []*drone.Gps) *Director {
 	return &Director{
 		controller: controller,
-		height:     5,
+		height:     4,
 		origin:     origin,
 		points:     points,
 		arrived:    make([]drone.Drone, len(points)),
@@ -74,6 +80,10 @@ func (d *Director) ArrivedIndex() int {
 	return len(d.arrived) - 1
 }
 
+func (d *Director) Assigning() drone.Drone {
+	return d.assigning
+}
+
 func (d *Director) IsDroneAssigned(dr drone.Drone) bool {
 	return slices.Contains(d.arrived, dr)
 }
@@ -87,7 +97,15 @@ func (d *Director) IsDone() bool {
 	return true
 }
 
-func (d *Director) AssignDrone(ctx context.Context, dr drone.Drone) error {
+func (d *Director) UseInspector(inspectors ...InspectorFunc) {
+	d.inspectors = append(d.inspectors, inspectors...)
+}
+
+// PrepareDrone put a drone into assigning slot
+func (d *Director) PreAssignDrone(ctx context.Context, dr drone.Drone) error {
+	if d.assigning != nil {
+		return errors.New("A drone is assigning")
+	}
 	ind := d.ArrivedIndex() + 1
 	if ind >= len(d.arrived) {
 		return errors.New("All points are assigned")
@@ -95,20 +113,134 @@ func (d *Director) AssignDrone(ctx context.Context, dr drone.Drone) error {
 	if d.IsDroneAssigned(dr) {
 		return errors.New("The drone is already assigned")
 	}
+	d.assigning = dr
+	return nil
+}
+
+// CancelDroneAssign clear the assigning slot
+func (d *Director) CancelDroneAssign() bool {
+	if d.assigning == nil {
+		return false
+	}
+	d.assigning = nil
+	return true
+}
+
+// InspectDrone runs the procedures to check a drone is good or not
+func (d *Director) InspectDrone(ctx context.Context, logger func(string)) error {
+	dr := d.assigning
+	if dr == nil {
+		return errors.New("No drone is assigning")
+	}
+	for i, inspector := range d.inspectors {
+		logger(fmt.Sprintf("Running inspection[%d]...", i))
+		if err := inspector(ctx, dr, logger); err != nil {
+			return &InspectError{Seq: i, Err: err}
+		}
+	}
+	return nil
+}
+
+// InspectError wraps the error happens while inspecting
+type InspectError struct {
+	Seq int
+	Err error
+}
+
+func (e *InspectError) Error() string {
+	return fmt.Sprintf("InspectError[%d]: %v", e.Seq, e.Err)
+}
+
+func (e *InspectError) Unwrap() error {
+	return e.Err
+}
+
+// PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
+func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
+	dr := d.assigning
+	if dr == nil {
+		return errors.New("No drone is assigning")
+	}
+
 	pos := dr.GetGPS()
 	if pos == nil {
 		return errors.New("Drone GPS is nil")
 	}
 	startPos := pos.Clone().MoveToUp(d.height)
-	endPos := d.points[ind]
+
+	aind := d.ArrivedIndex() + 1
+	ind := aind + maxPointIndex(d.points[aind:], func(a, b *drone.Gps) bool {
+		return a.DistanceTo(a)-b.DistanceTo(b) < 0
+	})
+	d.points[aind], d.points[ind] = d.points[ind], d.points[aind]
+	endPos := d.points[aind]
 	midPos := endPos.Clone()
 	midPos.Alt = startPos.Alt
+
 	if err := dr.SetMission(ctx, []*drone.Gps{startPos, midPos, endPos}); err != nil {
 		return err
 	}
+	if mode := dr.GetMode(); mode != 0 {
+		return fmt.Errorf("Drone mode is not 0, got %d", mode)
+	}
+	logger("Arming")
+	if err := dr.Arm(ctx); err != nil {
+		return err
+	}
+	select {
+	case <-time.After(time.Second * 5):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	logger("Taking off")
+	if err := dr.UpdateMode(ctx, 4); err != nil {
+		return err
+	}
+	if err := dr.Takeoff(ctx); err != nil {
+		return err
+	}
+	tctx, cancel := context.WithTimeout(ctx, time.Second*3)
+	err := dr.WaitUntilReached(tctx, startPos, 0.1)
+	cancel()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("Takeoff timeout")
+	}
+	logger("Starting mission")
 	if err := dr.StartMission(ctx, 0, 2); err != nil {
+		dr.Land(ctx)
+		return err
+	}
+	logger("Mission started")
+	if err := dr.WaitUntilArrived(ctx, 2); err != nil {
+		dr.Land(ctx)
+		return err
+	}
+	logger("Landing")
+	if err := dr.Land(ctx); err != nil {
+		return err
+	}
+	if err := dr.WaitUntilReady(ctx); err != nil {
+		return err
+	}
+	if err := dr.Disarm(ctx); err != nil {
 		return err
 	}
 	d.arrived[ind] = dr
+	d.assigning = nil
 	return nil
+}
+
+func maxPointIndex(points []*drone.Gps, less func(a, b *drone.Gps) bool) int {
+	max := 0
+	maxP := points[0]
+	for i, p := range points[1:] {
+		if less(maxP, p) {
+			maxP = p
+			max = i + 1
+		}
+	}
+	return max
 }

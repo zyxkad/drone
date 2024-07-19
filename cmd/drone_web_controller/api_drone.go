@@ -20,11 +20,15 @@ import (
 	"net/http"
 
 	"github.com/zyxkad/drone"
+	"github.com/zyxkad/drone/ext/director"
 )
 
 func (s *Server) buildAPIDroneRoute() {
 	s.route.HandleFunc("POST /api/drone/action", s.routeDroneAction)
 	s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
+
+	s.route.HandleFunc("POST /api/director/init", s.routeDirectorInit)
+	s.route.HandleFunc("POST /api/director/destroy", s.routeDirectorDestroy)
 }
 
 type MultiOpResp struct {
@@ -158,4 +162,56 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 		Failed:  len(errs),
 		Errors:  errs,
 	})
+}
+
+func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
+	var payload struct {
+		Origin *drone.Gps `json:"origin"`
+		Height float32    `json:"height"`
+	}
+	if !parseRequestBody(rw, req, &payload) {
+		return
+	}
+
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.controller == nil {
+		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+		return
+	}
+	if s.director != nil {
+		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
+		return
+	}
+	var points []*drone.Gps
+	s.director = director.NewDirector(s.controller, payload.Origin, points)
+	if payload.Height != 0 {
+		s.director.SetHeight(payload.Height)
+	}
+}
+
+func (s *Server) routeDirectorDestroy(rw http.ResponseWriter, req *http.Request) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.director == nil {
+		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
+		return
+	}
+	s.director = nil
+}
+
+func (s *Server) routeDirectorAssign(rw http.ResponseWriter, req *http.Request) {
+	//
+}
+
+func (s *Server) routeDirectorCheck(rw http.ResponseWriter, req *http.Request) {
+	//
+}
+
+func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request) {
+	//
+}
+
+func (s *Server) routeDirectorCancel(rw http.ResponseWriter, req *http.Request) {
+	//
 }

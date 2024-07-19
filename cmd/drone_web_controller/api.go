@@ -72,7 +72,7 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 		}
 		s.mux.Unlock()
 	}()
-	s.Log(LevelInfo, "New AWS connection from", req.RemoteAddr)
+	s.Log(LevelDebug, "New AWS connection from", req.RemoteAddr)
 	go s.sendDroneList(ws)
 	for {
 		msg, err := ws.ReadMessage()
@@ -86,9 +86,9 @@ func (s *Server) routeIO(rw http.ResponseWriter, req *http.Request) {
 func (s *Server) routeDevicesGET(rw http.ResponseWriter, req *http.Request) {
 	devices, err := drone.GetPortsList()
 	if err != nil {
-		writeJson(rw, http.StatusInternalServerError, Map{
-			"error":   "ReadPortsError",
-			"message": err.Error(),
+		writeJson(rw, http.StatusInternalServerError, &APIError{
+			Error:   "ReadPortsError",
+			Message: err.Error(),
 		})
 		return
 	}
@@ -124,9 +124,7 @@ func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request)
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller != nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "TargetIsExists",
-		})
+		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
 		return
 	}
 	controller, err := ardupilot.NewController(&gomavlib.EndpointSerial{
@@ -134,9 +132,9 @@ func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request)
 		Baud:   payload.BaudRate,
 	})
 	if err != nil {
-		writeJson(rw, http.StatusInternalServerError, Map{
-			"error":   "TargetSetupError",
-			"message": err.Error(),
+		writeJson(rw, http.StatusInternalServerError, &APIError{
+			Error:   "TargetSetupError",
+			Message: err.Error(),
 		})
 		return
 	}
@@ -151,9 +149,7 @@ func (s *Server) routeLoraConnectDELETE(rw http.ResponseWriter, req *http.Reques
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "TargetNotExist",
-		})
+		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
 		return
 	}
 	s.controller.Close()
@@ -188,9 +184,7 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.rtk != nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "TargetIsExists",
-		})
+		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
 		return
 	}
 	s.rtkCfg = payload
@@ -199,9 +193,9 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 		BaudRate: s.rtkCfg.BaudRate,
 	})
 	if err != nil {
-		writeJson(rw, http.StatusInternalServerError, Map{
-			"error":   "TargetSetupError",
-			"message": err.Error(),
+		writeJson(rw, http.StatusInternalServerError, &APIError{
+			Error:   "TargetSetupError",
+			Message: err.Error(),
 		})
 		return
 	}
@@ -220,9 +214,7 @@ func (s *Server) routeRtkConnectDELETE(rw http.ResponseWriter, req *http.Request
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.rtk == nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "TargetNotExist",
-		})
+		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
 		return
 	}
 	s.rtk.Close()
@@ -254,34 +246,36 @@ var schemaDecoder = schema.NewDecoder()
 func parseRequestBody(rw http.ResponseWriter, req *http.Request, ptr any) (parsed bool) {
 	contentType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil {
-		writeJson(rw, http.StatusBadRequest, Map{
-			"error":        "Unexpected Content-Type",
-			"content-type": req.Header.Get("Content-Type"),
-			"message":      err.Error(),
+		writeJson(rw, http.StatusBadRequest, APIError{
+			Error:   "Unexpected Content-Type",
+			Message: err.Error(),
+			Map: Map{
+				"content-type": req.Header.Get("Content-Type"),
+			},
 		})
 		return false
 	}
 	switch contentType {
 	case "application/application-x-www-form-urlencoded":
 		if err := req.ParseForm(); err != nil {
-			writeJson(rw, http.StatusBadRequest, Map{
-				"error":   "Cannot parse request body",
-				"message": err.Error(),
+			writeJson(rw, http.StatusBadRequest, &APIError{
+				Error:   "Cannot parse request body",
+				Message: err.Error(),
 			})
 			return false
 		}
 		if err := schemaDecoder.Decode(ptr, req.PostForm); err != nil {
-			writeJson(rw, http.StatusBadRequest, Map{
-				"error":   "Cannot assign request body",
-				"message": err.Error(),
+			writeJson(rw, http.StatusBadRequest, &APIError{
+				Error:   "Cannot assign request body",
+				Message: err.Error(),
 			})
 			return false
 		}
 	case "application/json":
 		if err := json.NewDecoder(req.Body).Decode(ptr); err != nil {
-			writeJson(rw, http.StatusBadRequest, Map{
-				"error":   "Cannot decode request body",
-				"message": err.Error(),
+			writeJson(rw, http.StatusBadRequest, &APIError{
+				Error:   "Cannot decode request body",
+				Message: err.Error(),
 			})
 			return false
 		}
@@ -304,4 +298,18 @@ func writeJson(rw http.ResponseWriter, code int, data any) {
 	rw.Header().Set("Content-Length", strconv.Itoa(len(buf)))
 	rw.WriteHeader(code)
 	rw.Write(buf)
+}
+
+type APIError struct {
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+	Map
+}
+
+var apiRespTargetIsExist = &APIError{
+	Error: "TargetIsExist",
+}
+
+var apiRespTargetNotExist = &APIError{
+	Error: "TargetNotExist",
 }

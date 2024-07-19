@@ -14,31 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package preflight
 
 import (
-	"sync"
+	"context"
+	"fmt"
+	"time"
 
-	"github.com/LiterMC/go-aws"
+	"github.com/zyxkad/drone"
 )
 
-func (s *Server) onWsMessage(ws *aws.WebSocket, msg *aws.Message) {
-	switch msg.Type {
-	case "drone-list-req":
-		s.sendDroneList(ws)
+func NewBatteryChecker(minVoltage float32) func(context.Context, drone.Drone, func(string)) error {
+	return func(ctx context.Context, dr drone.Drone, logger func(string)) error {
+		var bat *drone.BatteryStat
+		for {
+			bat = dr.GetBattery()
+			if bat != nil {
+				break
+			}
+			logger("Waiting for system status update")
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if bat.Voltage < minVoltage {
+			return fmt.Errorf("Voltage too low, got %.2f, want %.2f", bat.Voltage, minVoltage)
+		}
+		return nil
 	}
-}
-
-func (s *Server) BroadcastEvent(event string, data any) {
-	s.mux.RLock()
-	var wg sync.WaitGroup
-	for _, ws := range s.sockets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ws.WriteMessage(event, data)
-		}()
-	}
-	s.mux.RUnlock()
-	wg.Wait()
 }

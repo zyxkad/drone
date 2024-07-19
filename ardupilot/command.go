@@ -21,6 +21,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/bluenviron/gomavlib/v3/pkg/dialects/ardupilotmega"
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
 	"github.com/bluenviron/gomavlib/v3/pkg/message"
 
@@ -137,7 +138,7 @@ func (d *Drone) SendCommandInt(
 
 func (d *Drone) SendCommandLong(
 	ctx context.Context,
-	progCh chan<- *common.MessageCommandAck,
+	progCh chan<- uint8,
 	cmd common.MAV_CMD,
 	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
 ) (*common.MessageCommandAck, error) {
@@ -155,7 +156,7 @@ RESEND:
 		case msg := <-resCh:
 			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
 				if progCh != nil {
-					progCh <- msg
+					progCh <- msg.Progress
 				}
 				break RESEND
 			}
@@ -177,7 +178,7 @@ RESEND:
 			if msg.Result == common.MAV_RESULT_IN_PROGRESS {
 				if progCh != nil {
 					select {
-					case progCh <- msg:
+					case progCh <- msg.Progress:
 					case <-ctx.Done():
 						d.cancelCommand(cmd)
 						return nil, ctx.Err()
@@ -212,7 +213,7 @@ func (d *Drone) SendCommandIntOrError(
 
 func (d *Drone) SendCommandLongOrError(
 	ctx context.Context,
-	progCh chan<- *common.MessageCommandAck,
+	progCh chan<- uint8,
 	cmd common.MAV_CMD,
 	arg1, arg2, arg3, arg4, arg5, arg6, arg7 float32,
 ) error {
@@ -226,17 +227,43 @@ func (d *Drone) SendCommandLongOrError(
 	return nil
 }
 
-func (d *Drone) RequestMessage(ctx context.Context, id uint32) error {
+func (d *Drone) SendRequestMessage(ctx context.Context, id uint32) error {
 	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_REQUEST_MESSAGE, (float32)(id), 0, 0, 0, 0, 0, 1)
 }
 
-func (d *Drone) RequestMessageWithType(ctx context.Context, msg message.Message) error {
-	return d.RequestMessage(ctx, msg.GetID())
+func (d *Drone) SendRequestMessageWithType(ctx context.Context, msg message.Message) error {
+	return d.SendRequestMessage(ctx, msg.GetID())
+}
+
+func (d *Drone) RequestMessage(ctx context.Context, id uint32) (message.Message, error) {
+	d.mux.RLock()
+	if _, ok := d.requestingMsg[id]; ok {
+		d.mux.RUnlock()
+		return nil, errors.New("message is requesting")
+	}
+	d.mux.RUnlock()
+	if err := d.SendRequestMessage(ctx, id); err != nil {
+		return nil, err
+	}
+	ch := make(chan message.Message, 1)
+	d.mux.Lock()
+	d.requestingMsg[id] = ch
+	d.mux.Unlock()
+	select {
+	case msg := <-ch:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (d *Drone) UpdateMessageInterval(ctx context.Context, id uint32, dur time.Duration) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_SET_MESSAGE_INTERVAL, (float32)(id), (float32)(dur.Microseconds()), 0, 0, 0, 0, 1)
 }
 
 func (d *Drone) UpdateMode(ctx context.Context, mode int) error {
 	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_DO_SET_MODE,
-		0 /* TODO: set MAV_MODE? */, (float32)(mode), 0,
+		(float32)(common.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float32)(mode), 0,
 		0, 0, 0, 0)
 }
 
@@ -249,4 +276,36 @@ func (d *Drone) UpdateHome(ctx context.Context, pos *drone.Gps) error {
 	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_SET_HOME, 0,
 		drone.NaN, drone.NaN, drone.NaN,
 		lat, lon, pos.Alt)
+}
+
+func (d *Drone) ActiveLED(ctx context.Context, color drone.Color, dur time.Duration) error {
+	dur /= time.Millisecond
+	if dur > 0xffff {
+		dur = 0xffff
+	}
+	return d.sendLEDControl([]byte{
+		color.R, color.G, color.B,
+		(byte)(dur), (byte)(dur >> 8),
+		0x01,
+	})
+}
+
+func (d *Drone) ResetLED(ctx context.Context) error {
+	return d.sendLEDControl([]byte{
+		0, 0, 0,
+		0, 0,
+		0x00,
+	})
+}
+
+func (d *Drone) sendLEDControl(data []byte) error {
+	msg := &ardupilotmega.MessageLedControl{
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		Instance:        0b101010,
+		Pattern:         0b101010,
+		CustomLen:       (uint8)(len(data)),
+	}
+	copy(msg.CustomBytes[:], data)
+	return d.WriteMessage(msg)
 }

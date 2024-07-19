@@ -25,6 +25,10 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/zyxkad/drone"
+	"github.com/zyxkad/drone/ext/director"
+
+	"github.com/bluenviron/gomavlib/v3"
+	"github.com/zyxkad/drone/ardupilot"
 )
 
 type Server struct {
@@ -39,6 +43,7 @@ type Server struct {
 	rtkSvinAcc   float32
 	satelliteCfg drone.SatelliteCfg
 	rtkClosed    chan struct{}
+	director     *director.Director
 
 	sockets []*aws.WebSocket
 
@@ -61,6 +66,20 @@ func NewServer() *Server {
 		},
 	}
 	s.buildRoute()
+
+	controller, err := ardupilot.NewController(&gomavlib.EndpointUDPBroadcast{
+		BroadcastAddress: "255.255.255.255:14555",
+		LocalAddress:     "0.0.0.0:14550",
+	})
+	if err != nil {
+		panic(err)
+	}
+	s.controller = controller
+	// eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
+	// go s.forwardStation(s.controller, eventCh[0])
+	// go s.pollStation(s.controller, eventCh[1])
+	go s.pollStation(s.controller, s.controller.Events())
+
 	return s
 }
 

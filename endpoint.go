@@ -41,12 +41,13 @@ func (e *Endpoint) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		EndpointI
 	}
-	data.Type = e.Data.Type()
 	if e.Data == nil {
+		data.Type = "unknown"
 		data.EndpointI = &EndpointUnknown{
 			Raw: e.Raw,
 		}
 	} else {
+		data.Type = e.Data.Type()
 		data.EndpointI = e.Data
 	}
 	return json.Marshal(&data)

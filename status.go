@@ -20,7 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"time"
 )
 
 var NaN = (float32)(math.NaN())
@@ -36,7 +38,7 @@ const (
 	StatusSleeping
 	StatusArmed
 	StatusTakenoff
-	StatusNav
+	StatusManual
 	StatusError
 )
 
@@ -54,8 +56,8 @@ func (s DroneStatus) MarshalJSON() ([]byte, error) {
 		return ([]byte)(`"ARMED"`), nil
 	case StatusTakenoff:
 		return ([]byte)(`"TAKENOFF"`), nil
-	case StatusNav:
-		return ([]byte)(`"NAV"`), nil
+	case StatusManual:
+		return ([]byte)(`"MANUAL"`), nil
 	case StatusError:
 		return ([]byte)(`"ERROR"`), nil
 	}
@@ -92,4 +94,35 @@ func (a DroneAction) AsFunc() func(d Drone, ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+type BatteryStat struct {
+	Voltage   float32 `json:"voltage"`   // In V
+	Current   float32 `json:"current"`   // In A
+	Remaining float32 `json:"remaining"` // In %
+}
+
+func (s BatteryStat) String() string {
+	return fmt.Sprintf("{%.03fV %.03fA %.1f%%}", s.Voltage, s.Current, s.Remaining*100)
+}
+
+type Pong struct {
+	Duration    time.Duration
+	RespondTime time.Time
+	BootTime    time.Time
+}
+
+// Get the ping time (usually half of the ping-pong duration)
+func (p *Pong) Ping() time.Duration {
+	return p.Duration / 2
+}
+
+type Color struct {
+	R byte `json:"r"`
+	G byte `json:"g"`
+	B byte `json:"b"`
+}
+
+func (c *Color) String() string {
+	return fmt.Sprintf("<Color rgb=(0x%02x, 0x%02x, 0x%02x)>", c.R, c.G, c.B)
 }
