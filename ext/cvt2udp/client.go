@@ -69,7 +69,17 @@ func (s *Client) RunForward(c drone.Controller, eventCh <-chan drone.Event) erro
 	if s.closed.Load() {
 		return errors.New("closed")
 	}
-	bufw := bytes.NewBuffer(make([]byte, 65536))
+	bufw := bytes.NewBuffer(make([]byte, 0, 65536))
+	writer, err := frame.NewWriter(frame.WriterConf{
+		Writer: bufw,
+		// The OutXXX does not affect WriteFrame, so just need to give some valid values below
+		OutVersion:     frame.V2,
+		OutSystemID:    1,
+		OutComponentID: 1,
+	})
+	if err != nil {
+		panic(err)
+	}
 	for !s.closed.Load() {
 		select {
 		case e := <-eventCh:
@@ -94,16 +104,6 @@ func (s *Client) RunForward(c drone.Controller, eventCh <-chan drone.Event) erro
 				s.mux.Unlock()
 			}
 			bufw.Reset()
-			writer, err := frame.NewWriter(frame.WriterConf{
-				Writer: bufw,
-				// The OutXXX does not affect WriteFrame
-				OutVersion:     frame.V2,
-				OutSystemID:    (byte)(id),
-				OutComponentID: 1,
-			})
-			if err != nil {
-				panic(err)
-			}
 			if err := writer.WriteFrame(msg.RawData.(frame.Frame)); err != nil {
 				log.Println("Error when writing frame", err)
 				continue
