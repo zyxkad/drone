@@ -53,7 +53,7 @@ type DroneSettings struct {
 	Lights     any    `json:"lights"`
 }
 
-func ParseSkyC(r *zip.Reader) (*SkyC, error) {
+func ReadSkyC(r *zip.Reader) (*SkyC, error) {
 	fd, err := r.Open("show.json")
 	if err != nil {
 		return nil, err
@@ -79,15 +79,9 @@ func ParseSkyC(r *zip.Reader) (*SkyC, error) {
 // origin is the origin position of the swarm
 // heading is the heading of the swarm in degrees
 func (s *SkyC) GenerateHomeGPSList(origin *drone.Gps, heading float32) []*drone.Gps {
-	m := make([]*drone.Gps, len(s.Data.Swarm.Drones))
+	rels := make([]*vec3.T, len(s.Data.Swarm.Drones))
 	for i, d := range s.Data.Swarm.Drones {
-		g := origin.Clone()
-		h := d.Settings.Home
-		g.Alt += h[2]
-		s, c := math.Sincos(heading * math.Pi / 180)
-		g.MoveToNorth(h[0]*s + h[1]*c)
-		g.MoveToEast(h[1]*s - h[0]*c)
-		m[i] = g
+		rels[i] = &d.Settings.Home
 	}
-	return m
+	return origin.FromRelatives(rels, heading)
 }

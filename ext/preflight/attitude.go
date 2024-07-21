@@ -46,7 +46,7 @@ func NewAttitudeChecker(maxPitch float32, maxVib float32) func(context.Context, 
 			return fmt.Errorf("Vibration is too large, got %f, want %f", vib, maxVib)
 		}
 		rotate := dr.GetRotate()
-		if rotate != nil {
+		if rotate == nil {
 			return errors.New("Rotate is nil")
 		}
 		if rotate.Pitch < -maxPitch || maxPitch < rotate.Pitch {

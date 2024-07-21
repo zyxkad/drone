@@ -17,8 +17,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LiterMC/go-aws"
@@ -27,8 +29,12 @@ import (
 	"github.com/zyxkad/drone"
 	"github.com/zyxkad/drone/ext/director"
 
+	// TODO: BEGIN TMP TEST
+	"archive/zip"
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/zyxkad/drone/ardupilot"
+	"github.com/zyxkad/drone/ext/preflight"
+	"github.com/zyxkad/drone/ext/skybrush"
 )
 
 type Server struct {
@@ -43,7 +49,14 @@ type Server struct {
 	rtkSvinAcc   float32
 	satelliteCfg drone.SatelliteCfg
 	rtkClosed    chan struct{}
-	director     *director.Director
+
+	directorMux          sync.Mutex
+	director             *director.Director
+	directorAssignCtx    context.Context
+	directorAssignCancel context.CancelFunc
+	directorAssigningId  atomic.Int64
+	directorCheckPassed  bool
+	directorLastLog      atomic.Pointer[string]
 
 	sockets []*aws.WebSocket
 
@@ -67,6 +80,7 @@ func NewServer() *Server {
 	}
 	s.buildRoute()
 
+	// TODO: BEGIN TMP TEST
 	controller, err := ardupilot.NewController(&gomavlib.EndpointUDPBroadcast{
 		BroadcastAddress: "255.255.255.255:14555",
 		LocalAddress:     "0.0.0.0:14550",
@@ -75,10 +89,37 @@ func NewServer() *Server {
 		panic(err)
 	}
 	s.controller = controller
-	// eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
-	// go s.forwardStation(s.controller, eventCh[0])
-	// go s.pollStation(s.controller, eventCh[1])
-	go s.pollStation(s.controller, s.controller.Events())
+	eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
+	go s.forwardStation(s.controller, eventCh[0], "127.0.0.1:14551")
+	go s.pollStation(s.controller, eventCh[1])
+
+	parsePoints := func() []*drone.Gps {
+		zr, err := zip.OpenReader("/Users/ckpn/Documents/test.skyc")
+		if err != nil {
+			panic(err)
+		}
+		defer zr.Close()
+		skyc, err := skybrush.ReadSkyC(&zr.Reader)
+		if err != nil {
+			panic(err)
+		}
+		origin := &drone.Gps{
+			Lat: 51.0932189,
+			Lon: -114.0291968,
+			Alt: 1079.5,
+		}
+		gpsList := skyc.GenerateHomeGPSList(origin, 0)
+		println("Generated %d GPS", len(gpsList))
+		for _, g := range gpsList {
+			println(" -", g.String())
+		}
+		return gpsList
+	}
+	points := parsePoints()
+	s.director = director.NewDirector(s.controller, points)
+	s.director.SetHeight(1.2)
+	s.director.UseInspector(preflight.NewAttitudeChecker(5, 0.1) /*preflight.NewBatteryChecker(16), preflight.NewGpsTypeChecker()*/)
+	// TODO: END TMP TEST
 
 	return s
 }

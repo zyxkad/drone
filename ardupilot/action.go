@@ -26,6 +26,15 @@ import (
 	"github.com/zyxkad/drone"
 )
 
+func (d *Drone) SetFence(ctx context.Context, vectors []*drone.Gps) error {
+	return errors.New("Not implemented")
+}
+
+func (d *Drone) DisableFence(ctx context.Context) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_DO_FENCE_ENABLE, 0x00, (float32)(common.FENCE_TYPE_ALL),
+		0, 0, 0, 0, 0)
+}
+
 // Arm arms the drone after prearm checks
 // Drone will automaticly disarm after a period
 func (d *Drone) Arm(ctx context.Context) error {
@@ -107,11 +116,12 @@ func (d *Drone) pauseOrContinue(ctx context.Context, param1 float32) error {
 		0, 0, 0, 0, 0, 0)
 }
 
-func (d *Drone) HoldAt(ctx context.Context, pos *drone.Gps) error {
+// MoveTo requires the drone in GUIDED(4) mode
+func (d *Drone) MoveTo(ctx context.Context, pos *drone.Gps) error {
 	var yaw float32 = drone.NaN
 	lat, lon := pos.ToWGS84()
 	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_REPOSITION,
-		-1, (float32)(common.MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), 0,
+		-1, 0, 0,
 		yaw, lat, lon, pos.Alt)
 }
 

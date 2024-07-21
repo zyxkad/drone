@@ -64,6 +64,14 @@ func (s DroneStatus) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("Unexpected DroneStatus")
 }
 
+func (s DroneStatus) IsActive() bool {
+	switch s {
+	case StatusArmed, StatusTakenoff, StatusManual:
+		return true
+	}
+	return false
+}
+
 type DroneAction string
 
 const (

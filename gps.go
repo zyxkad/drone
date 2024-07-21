@@ -201,3 +201,17 @@ func (g *Gps) DistanceAltComparator(a, b *Gps) int {
 	}
 	return 0
 }
+
+func (g *Gps) FromRelatives(rels []*vec3.T, heading float32) []*Gps {
+	l := make([]*Gps, len(rels))
+	for i, r := range rels {
+		p := g.Clone()
+		p.Alt += r[2]
+		s1, c1 := math.Sincos((float64)(heading * math.Pi / 180))
+		s, c := (float32)(s1), (float32)(c1)
+		p.MoveToNorth(r[0]*s + r[1]*c)
+		p.MoveToEast(r[1]*s - r[0]*c)
+		l[i] = p
+	}
+	return l
+}

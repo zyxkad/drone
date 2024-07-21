@@ -19,10 +19,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"os"
 )
 
 var (
@@ -30,7 +28,7 @@ var (
 )
 
 var (
-	logDir = "log"
+	logsDir = "logs"
 )
 
 func parseFlags() {
@@ -47,19 +45,7 @@ func main() {
 	}
 	fmt.Print(LICENSE_SHORT)
 
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-	{
-		logWriters := []io.Writer{os.Stderr}
-		os.Mkdir(logDir, 0755)
-		logFile, logFileErr := openLogFile(logDir)
-		if logFile != nil {
-			logWriters = append(logWriters, logFile)
-		}
-		log.SetOutput(io.MultiWriter(logWriters...))
-		if logFileErr != nil {
-			log.Println("Error when opening log file:", logFileErr)
-		}
-	}
+	initGlobalLogger()
 
 	server := NewServer()
 	log.Println("Server starting at", "http://"+addr)

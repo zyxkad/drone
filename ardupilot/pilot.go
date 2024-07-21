@@ -236,6 +236,21 @@ func (d *Drone) handleMessage(msg message.Message) {
 		})
 	}
 
+	msgId := msg.GetID()
+	{
+		d.mux.RLock()
+		_, ok := d.requestingMsg[msgId]
+		d.mux.RUnlock()
+		if ok {
+			d.mux.Lock()
+			if msgCh, ok := d.requestingMsg[msgId]; ok {
+				delete(d.requestingMsg, msgId)
+				msgCh <- msg // should never block
+			}
+			d.mux.Unlock()
+		}
+	}
+
 	switch msg := msg.(type) {
 	case *common.MessageHeartbeat:
 		if d.customMode.Load() != msg.CustomMode {
@@ -244,13 +259,17 @@ func (d *Drone) handleMessage(msg message.Message) {
 				Drone: d,
 			})
 		}
-		var newStatus drone.DroneStatus = -1
+		lastStatus := (drone.DroneStatus)(d.status.Load())
+		newStatus := lastStatus
 		switch msg.SystemStatus {
 		case common.MAV_STATE_UNINIT, common.MAV_STATE_BOOT, common.MAV_STATE_CALIBRATING:
 			newStatus = drone.StatusUnstable
 		case common.MAV_STATE_STANDBY:
 			newStatus = drone.StatusReady
 		case common.MAV_STATE_ACTIVE:
+			if !lastStatus.IsActive() {
+				newStatus = drone.StatusTakenoff
+			}
 			// if msg.BaseMode&common.MAV_MODE_FLAG_SAFETY_ARMED != 0 {
 			// 	newStatus = drone.StatusArmed
 			// } else if msg.BaseMode&(common.MAV_MODE_FLAG_GUIDED_ENABLED|common.MAV_MODE_FLAG_AUTO_ENABLED) != 0 {
@@ -261,13 +280,13 @@ func (d *Drone) handleMessage(msg message.Message) {
 		case common.MAV_STATE_CRITICAL, common.MAV_STATE_EMERGENCY:
 			newStatus = drone.StatusError
 		case common.MAV_STATE_POWEROFF, common.MAV_STATE_FLIGHT_TERMINATION:
-			if d.status.Load() != (uint32)(drone.StatusError) {
+			if lastStatus != drone.StatusError {
 				newStatus = drone.StatusSleeping
 			}
 		default:
 			panic("unexpected SystemStatus")
 		}
-		if newStatus != -1 && d.status.Load() != (uint32)(newStatus) {
+		if lastStatus != newStatus {
 			d.status.Store((uint32)(newStatus))
 		}
 		return

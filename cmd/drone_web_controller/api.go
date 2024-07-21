@@ -139,9 +139,9 @@ func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 	s.controller = controller
-	eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
-	go s.forwardStation(s.controller, eventCh[0])
-	go s.pollStation(s.controller, eventCh[1])
+	eventChs := dupChannel(s.controller.Context(), s.controller.Events(), 2)
+	go s.forwardStation(s.controller, eventChs[0], "127.0.0.1:14551")
+	go s.pollStation(s.controller, eventChs[1])
 	rw.WriteHeader(http.StatusNoContent)
 }
 
@@ -249,7 +249,7 @@ func parseRequestBody(rw http.ResponseWriter, req *http.Request, ptr any) (parse
 		writeJson(rw, http.StatusBadRequest, APIError{
 			Error:   "Unexpected Content-Type",
 			Message: err.Error(),
-			Map: Map{
+			Data: Map{
 				"content-type": req.Header.Get("Content-Type"),
 			},
 		})
@@ -303,7 +303,7 @@ func writeJson(rw http.ResponseWriter, code int, data any) {
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message,omitempty"`
-	Map
+	Data    Map    `json:"data,omitempty"`
 }
 
 var apiRespTargetIsExist = &APIError{

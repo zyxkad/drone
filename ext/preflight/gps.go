@@ -14,30 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package skybrush_test
+package preflight
 
 import (
-	"archive/zip"
-	"testing"
+	"context"
+	"fmt"
 
 	"github.com/zyxkad/drone"
-	"github.com/zyxkad/drone/ext/skybrush"
 )
 
-func TestSkyc(t *testing.T) {
-	zr, err := zip.OpenReader("testdata/27_v1.skyc")
-	if err != nil {
-		t.Fatalf("Cannot open skyc: %v", err)
-	}
-	defer zr.Close()
-	skyc, err := skybrush.ReadSkyC(&zr.Reader)
-	if err != nil {
-		t.Fatalf("Cannot parse skyc: %v", err)
-	}
-	origin := &drone.Gps{}
-	gpsList := skyc.GenerateHomeGPSList(origin, 0)
-	t.Logf("Generated %d GPS", len(gpsList))
-	for _, g := range gpsList {
-		t.Logf(" - %v", g)
+func NewGpsTypeChecker() func(context.Context, drone.Drone, func(string)) error {
+	return func(ctx context.Context, dr drone.Drone, logger func(string)) error {
+		t := dr.GetGPSType()
+		if t < 6 {
+			return fmt.Errorf("Require gpsType is RTK_FIXED, got %d", t)
+		}
+		return nil
 	}
 }

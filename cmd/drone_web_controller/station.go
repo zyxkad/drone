@@ -87,8 +87,7 @@ func (s *Server) sendDroneList(ws *aws.WebSocket) error {
 	return ws.WriteMessage("drone-list", droneList)
 }
 
-func (s *Server) forwardStation(station drone.Controller, eventCh <-chan drone.Event) {
-	addr := "127.0.0.1:14550"
+func (s *Server) forwardStation(station drone.Controller, eventCh <-chan drone.Event, addr string) {
 	client, err := cvt2udp.NewClient(addr)
 	if err != nil {
 		s.Log(LevelError, "Cannot setup udp client:", err)

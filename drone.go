@@ -44,6 +44,9 @@ type Drone interface {
 	Ping(ctx context.Context) error
 	SendMessage(msg any) error
 
+	SetFence(ctx context.Context, vectors []*Gps) error
+	DisableFence(ctx context.Context) error
+
 	Arm(ctx context.Context) error
 	Disarm(ctx context.Context) error
 	Takeoff(ctx context.Context) error
@@ -51,9 +54,9 @@ type Drone interface {
 	Home(ctx context.Context) error
 	// Hold make the drone hold at current position
 	Hold(ctx context.Context) error
-	// HoldAt make the drone hold at specific position
+	// MoveTo make the drone hold at specific position
 	// It does not wait the drone complete its action
-	HoldAt(ctx context.Context, pos *Gps) error
+	MoveTo(ctx context.Context, pos *Gps) error
 
 	// SetMission clear the old mission and push new missions
 	SetMission(ctx context.Context, path []*Gps) error

@@ -38,7 +38,7 @@ type MotorTestConfig struct {
 
 func NewMotorTester(cfg MotorTestConfig) func(context.Context, drone.Drone, func(string)) error {
 	testDuration := (time.Duration)(cfg.TestDuration * (float64)(time.Second))
-	if testDuration <= time.Millisecond * 300 {
+	if testDuration <= time.Millisecond*300 {
 		testDuration = time.Second * 5
 	}
 	batteryReportRate := time.Millisecond * 100
