@@ -278,6 +278,12 @@ func (d *Drone) UpdateHome(ctx context.Context, pos *drone.Gps) error {
 		lat, lon, pos.Alt)
 }
 
+func (d *Drone) Reboot(ctx context.Context) error {
+	return d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+		1, 0, 0, 0,
+		0, 0, 0)
+}
+
 func (d *Drone) ActiveLED(ctx context.Context, color drone.Color, dur time.Duration) error {
 	dur /= time.Millisecond
 	if dur > 0xffff {

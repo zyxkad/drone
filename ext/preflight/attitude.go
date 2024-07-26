@@ -42,8 +42,8 @@ func NewAttitudeChecker(maxPitch float32, maxVib float32) func(context.Context, 
 			return fmt.Errorf("Error when requesting vibration: %w", err)
 		}
 		vmsg := msg.(*common.MessageVibration)
-		if vib := (float32)(math.Sqrt((float64)(vmsg.VibrationX*vmsg.VibrationX + vmsg.VibrationY*vmsg.VibrationY + vmsg.VibrationZ*vmsg.VibrationZ))); vib > maxVib {
-			return fmt.Errorf("Vibration is too large, got %f, want %f", vib, maxVib)
+		if vib := vmsg.VibrationX*vmsg.VibrationX + vmsg.VibrationY*vmsg.VibrationY + vmsg.VibrationZ*vmsg.VibrationZ; vib > maxVib*maxVib {
+			return fmt.Errorf("Vibration is too large, got %f, want %f", math.Sqrt((float64)(vib)), maxVib)
 		}
 		rotate := dr.GetRotate()
 		if rotate == nil {

@@ -138,7 +138,7 @@ func (s *Client) runHandle(c drone.Controller, dr drone.Drone, conn *net.UDPConn
 			}
 			return err
 		}
-		if addr != serverAddr {
+		if addr.Port() != serverAddr.Port() || addr.Addr().As16() != serverAddr.Addr().As16() {
 			continue
 		}
 		if n == 0 {

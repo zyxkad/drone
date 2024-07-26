@@ -152,7 +152,7 @@ func (e *InspectError) Unwrap() error {
 
 // PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
 func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
-	const reachRadius = 0.2
+	const reachRadius = 0.25
 
 	dr := d.assigning
 	if dr == nil {
@@ -162,19 +162,24 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	if d.inspectAt == nil {
 		return errors.New("Drone precheck failed")
 	}
+	select {
+	case <-time.After(time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	pos := dr.GetGPS()
 	if pos == nil {
 		return errors.New("Drone GPS is nil")
 	}
 	if diff := d.inspectAt.DistanceTo(pos); diff > 0.1 {
-		return fmt.Errorf("Drone unexpectedly moved %.2fm", diff)
+		return fmt.Errorf("Drone unexpectedly moved %.2fm, please do check again", diff)
 	}
 
 	startPos := pos.Clone().MoveToUp(d.height)
 
 	aind := d.ArrivedIndex() + 1
 	ind := aind + maxPointIndex(d.points[aind:], func(a, b *drone.Gps) bool {
-		return a.DistanceTo(a)-b.DistanceTo(b) < 0
+		return pos.DistanceAltComparator(a, b) < 0
 	})
 	d.points[aind], d.points[ind] = d.points[ind], d.points[aind]
 	endPos := d.points[aind]
@@ -205,7 +210,7 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	logger("Moving up")
+	logger("Moving up: " + startPos.String())
 	if err := dr.MoveTo(ctx, startPos); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
@@ -214,7 +219,7 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		dr.Land(ctx)
 		return err
 	}
-	logger("Moving to target top")
+	logger("Moving to target top: " + midPos.String())
 	if err := dr.MoveTo(ctx, midPos); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
@@ -223,7 +228,7 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		dr.Land(ctx)
 		return err
 	}
-	logger("Moving down")
+	logger("Moving down: " + endPos.String())
 	if err := dr.MoveTo(ctx, endPos); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)

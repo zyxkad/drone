@@ -68,8 +68,8 @@ type Drone struct {
 }
 
 var (
-	_ drone.Drone  = (*Drone)(nil)
-	_ drone.LEDExt = (*Drone)(nil)
+	_ drone.Drone      = (*Drone)(nil)
+	_ drone.LEDAbility = (*Drone)(nil)
 )
 
 type DroneExtraInfo struct {

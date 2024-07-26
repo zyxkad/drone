@@ -44,8 +44,7 @@ type Drone interface {
 	Ping(ctx context.Context) error
 	SendMessage(msg any) error
 
-	SetFence(ctx context.Context, vectors []*Gps) error
-	DisableFence(ctx context.Context) error
+	Reboot(ctx context.Context) error
 
 	Arm(ctx context.Context) error
 	Disarm(ctx context.Context) error
@@ -66,19 +65,28 @@ type Drone interface {
 	WaitUntilArrived(ctx context.Context, id int) error
 	WaitUntilReached(ctx context.Context, pos *Gps, radius float32) error
 	WaitUntilReady(ctx context.Context) error
+
+	FenceAbility
 }
 
-type CommandExt interface {
-	ExecuteCommand(ctx context.Context, cmd int, args ...float32) error
-}
+type (
+	FenceAbility interface {
+		SetFence(ctx context.Context, vectors []*Gps) error
+		DisableFence(ctx context.Context) error
+	}
 
-type LEDExt interface {
-	GetLED() Color
-	ActiveLED(ctx context.Context, color Color, dur time.Duration) error
-	ResetLED(ctx context.Context) error
-}
+	CommandAbility interface {
+		ExecuteCommand(ctx context.Context, cmd int, args ...float32) error
+	}
 
-type BuzzerExt interface {
-	GetBuzzFormats() []string
-	Buzz(ctx context.Context, format string, data []byte) error
-}
+	LEDAbility interface {
+		GetLED() Color
+		ActiveLED(ctx context.Context, color Color, dur time.Duration) error
+		ResetLED(ctx context.Context) error
+	}
+
+	BuzzerAbility interface {
+		GetBuzzFormats() []string
+		Buzz(ctx context.Context, format string, data []byte) error
+	}
+)

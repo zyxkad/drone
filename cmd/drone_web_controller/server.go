@@ -30,11 +30,8 @@ import (
 	"github.com/zyxkad/drone/ext/director"
 
 	// TODO: BEGIN TMP TEST
-	"archive/zip"
 	"github.com/bluenviron/gomavlib/v3"
 	"github.com/zyxkad/drone/ardupilot"
-	"github.com/zyxkad/drone/ext/preflight"
-	"github.com/zyxkad/drone/ext/skybrush"
 )
 
 type Server struct {
@@ -51,11 +48,14 @@ type Server struct {
 	rtkClosed    chan struct{}
 
 	directorMux          sync.Mutex
-	director             *director.Director
+	director             atomic.Pointer[director.Director]
 	directorAssignCtx    context.Context
 	directorAssignCancel context.CancelFunc
 	directorAssigningId  atomic.Int64
-	directorCheckPassed  bool
+	directorTotalSlots   atomic.Int32
+	directorAssigned     atomic.Int32
+	directorStatus       atomic.Pointer[string]
+	directorCheckPassed  atomic.Bool
 	directorLastLog      atomic.Pointer[string]
 
 	sockets []*aws.WebSocket
@@ -92,33 +92,6 @@ func NewServer() *Server {
 	eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
 	go s.forwardStation(s.controller, eventCh[0], "127.0.0.1:14551")
 	go s.pollStation(s.controller, eventCh[1])
-
-	parsePoints := func() []*drone.Gps {
-		zr, err := zip.OpenReader("/Users/ckpn/Documents/test.skyc")
-		if err != nil {
-			panic(err)
-		}
-		defer zr.Close()
-		skyc, err := skybrush.ReadSkyC(&zr.Reader)
-		if err != nil {
-			panic(err)
-		}
-		origin := &drone.Gps{
-			Lat: 51.0932189,
-			Lon: -114.0291968,
-			Alt: 1079.5,
-		}
-		gpsList := skyc.GenerateHomeGPSList(origin, 0)
-		println("Generated %d GPS", len(gpsList))
-		for _, g := range gpsList {
-			println(" -", g.String())
-		}
-		return gpsList
-	}
-	points := parsePoints()
-	s.director = director.NewDirector(s.controller, points)
-	s.director.SetHeight(1.2)
-	s.director.UseInspector(preflight.NewAttitudeChecker(5, 0.1) /*preflight.NewBatteryChecker(16), preflight.NewGpsTypeChecker()*/)
 	// TODO: END TMP TEST
 
 	return s

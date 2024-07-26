@@ -121,7 +121,6 @@ func (s *Server) ToastAndLogf(level LogLevel, title string, format string, args 
 func initGlobalLogger() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	logWriters := []io.Writer{os.Stderr}
-	os.Mkdir(logsDir, 0755)
 	logFile, logFileErr := openLogFile(logsDir)
 	if logFile != nil {
 		logWriters = append(logWriters, logFile)
@@ -133,7 +132,10 @@ func initGlobalLogger() {
 }
 
 func openLogFile(dir string) (fd *os.File, err error) {
-	baseName := time.Now().Format("2006-01-02-15.%02d.log")
+	now := time.Now()
+	dir = filepath.Join(dir, now.Format("2006-01-02"))
+	os.MkdirAll(dir, 0755)
+	baseName := now.Format("2006-01-02-15") + ".%02d.log"
 	for i := 1; i < 1000; i++ {
 		fd, err = os.OpenFile(filepath.Join(dir, fmt.Sprintf(baseName, i)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if !errors.Is(err, os.ErrExist) {

@@ -106,6 +106,10 @@ func (c *Controller) GetBootTime() time.Time {
 	return c.bootTime
 }
 
+func (c *Controller) GetBootTimeMs() uint32 {
+	return (uint32)(c.bootTime.UnixMilli())
+}
+
 func (c *Controller) Drones() (drones []drone.Drone) {
 	c.mux.RLock()
 	defer c.mux.RUnlock()
@@ -119,8 +123,10 @@ func (c *Controller) Drones() (drones []drone.Drone) {
 func (c *Controller) GetDrone(id int) drone.Drone {
 	c.mux.RLock()
 	defer c.mux.RUnlock()
-	d, _ := c.drones[id]
-	return d
+	if d, ok := c.drones[id]; ok {
+		return d
+	}
+	return nil
 }
 
 func (c *Controller) Events() <-chan drone.Event {

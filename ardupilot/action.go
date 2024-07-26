@@ -118,12 +118,33 @@ func (d *Drone) pauseOrContinue(ctx context.Context, param1 float32) error {
 
 // MoveTo requires the drone in GUIDED(4) mode
 func (d *Drone) MoveTo(ctx context.Context, pos *drone.Gps) error {
-	var yaw float32 = drone.NaN
 	lat, lon := pos.ToWGS84()
-	return d.SendCommandIntOrError(ctx, common.MAV_FRAME_GLOBAL, common.MAV_CMD_DO_REPOSITION,
-		-1, 0, 0,
-		yaw, lat, lon, pos.Alt)
+	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
+		TimeBootMs:      d.controller.GetBootTimeMs(),
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		CoordinateFrame: common.MAV_FRAME_GLOBAL_INT,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+		LatInt:          lat,
+		LonInt:          lon,
+		Alt:             pos.Alt,
+	})
 }
+
+// func (d *Drone) MoveToWithHeading(ctx context.Context, pos *drone.Gps, heading float32) error {
+// 	lat, lon := pos.ToWGS84()
+// 	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
+// 		TimeBootMs:      d.controller.GetBootTimeMs(),
+// 		TargetSystem:    (byte)(d.ID()),
+// 		TargetComponent: d.component,
+// 		CoordinateFrame: common.MAV_FRAME_GLOBAL_INT,
+// 		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+// 		LatInt:          lat,
+// 		LonInt:          lon,
+// 		Alt:             pos.Alt,
+// 		Yaw:             heading,
+// 	})
+// }
 
 func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
 	if len(path) > 0xffff {
@@ -143,7 +164,7 @@ func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
 			TargetSystem:    (byte)(d.ID()),
 			TargetComponent: d.component,
 			Seq:             (uint16)(i),
-			Frame:           common.MAV_FRAME_GLOBAL,
+			Frame:           common.MAV_FRAME_GLOBAL_INT,
 			Autocontinue:    1,
 			X:               lat,
 			Y:               lon,

@@ -32,12 +32,12 @@ func (s *Server) buildAPIDroneRoute() {
 	s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
 
 	s.route.HandleFunc("POST /api/director/init", s.routeDirectorInit)
-	s.route.HandleFunc("POST /api/director/destroy", s.routeDirectorDestroy)
+	s.route.HandleFunc("DELETE /api/director/destroy", s.routeDirectorDestroy)
 	s.route.HandleFunc("POST /api/director/assign", s.routeDirectorAssign)
 	s.route.HandleFunc("POST /api/director/check", s.routeDirectorCheck)
 	s.route.HandleFunc("POST /api/director/transfer", s.routeDirectorTransfer)
 	s.route.HandleFunc("POST /api/director/cancel", s.routeDirectorCancel)
-	s.route.HandleFunc("POST /api/director/poll", s.routeDirectorPoll)
+	s.route.HandleFunc("GET /api/director/poll", s.routeDirectorPoll)
 }
 
 type MultiOpResp struct {
@@ -178,6 +178,10 @@ func (s *Server) directorLogger(log string) {
 	s.directorLastLog.Store(&log)
 }
 
+func (s *Server) storeDirectorStatus(status string) {
+	s.directorStatus.Store(&status)
+}
+
 func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
 	var payload struct {
 		Slots   []*vec3.T `json:"slots"`
@@ -189,46 +193,71 @@ func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	dt := s.director.Load()
+	if dt != nil {
+		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
+		return
+	}
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
 		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
 		return
 	}
-	s.directorMux.Lock()
-	defer s.directorMux.Unlock()
-	if s.director != nil {
+	if dt = s.director.Load(); dt != nil {
 		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
 		return
 	}
-	gpsList := payload.Origin.FromRelatives(payload.Slots, 0)
-	s.director = director.NewDirector(s.controller, gpsList)
+	s.directorMux.Lock()
+	defer s.directorMux.Unlock()
+	gpsList := payload.Origin.FromRelatives(payload.Slots, payload.Heading)
+	dt = director.NewDirector(s.controller, gpsList)
 	if payload.Height != 0 {
-		s.director.SetHeight(payload.Height)
+		dt.SetHeight(payload.Height)
 	}
-	s.director.UseInspector(preflight.NewGpsTypeChecker(), preflight.NewAttitudeChecker(5, 0.1), preflight.NewBatteryChecker(16))
+	dt.UseInspector(preflight.NewGpsTypeChecker(), preflight.NewAttitudeChecker(5, 0.1), preflight.NewBatteryChecker(16))
+	s.director.Store(dt)
+	s.directorTotalSlots.Store((int32)(len(payload.Slots)))
+	s.directorAssigned.Store(0)
+	s.directorStatus.Store(nil)
+	rw.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) routeDirectorDestroy(rw http.ResponseWriter, req *http.Request) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.directorMux.Lock()
-	defer s.directorMux.Unlock()
-	if s.director == nil {
+	dt := s.director.Load()
+	if dt == nil {
 		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
 		return
 	}
-	s.director = nil
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.directorAssignCancel != nil {
+		s.directorAssignCancel()
+	}
+	s.directorMux.Lock()
+	defer s.directorMux.Unlock()
+	if dt = s.director.Load(); dt == nil {
+		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
+		return
+	}
+	dt.CancelDroneAssign()
+	s.director.Store(nil)
+	rw.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) routeDirectorAssign(rw http.ResponseWriter, req *http.Request) {
 	var payload struct {
-		Drone int `json:"drone"`
+		Drone int `json:"drone" schema:"drone"`
 	}
 	if !parseRequestBody(rw, req, &payload) {
 		return
 	}
 
+	dt := s.director.Load()
+	if dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
@@ -249,40 +278,49 @@ func (s *Server) routeDirectorAssign(rw http.ResponseWriter, req *http.Request) 
 	}
 	s.directorMux.Lock()
 	defer s.directorMux.Unlock()
-	if s.director == nil {
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+	if dt = s.director.Load(); dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
 		return
 	}
 	s.directorAssigningId.Store((int64)(payload.Drone))
 	s.directorAssignCtx, s.directorAssignCancel = context.WithCancel(context.Background())
-	s.directorCheckPassed = false
-	s.director.PreAssignDrone(dr)
+	s.directorCheckPassed.Store(false)
+	dt.PreAssignDrone(dr)
+	s.storeDirectorStatus("PreAssigned")
 	rw.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) routeDirectorCheck(rw http.ResponseWriter, req *http.Request) {
-	s.directorMux.Lock()
-	if s.director == nil {
-		s.directorMux.Unlock()
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+	dt := s.director.Load()
+	if dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
 		return
 	}
-	assigning := s.director.Assigning()
+	s.directorMux.Lock()
+	if dt = s.director.Load(); dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
+	assigning := dt.Assigning()
 	if assigning == nil {
 		s.directorMux.Unlock()
 		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
 		return
 	}
-	s.directorCheckPassed = false
+	s.directorCheckPassed.Store(false)
+	s.storeDirectorStatus("Checking")
 	go func() {
-		defer s.directorMux.Unlock()
-		err := s.director.InspectDrone(s.directorAssignCtx, s.directorLogger)
+		err := dt.InspectDrone(s.directorAssignCtx, s.directorLogger)
+		s.directorMux.Unlock()
 		if err != nil {
 			errStr := err.Error()
 			s.directorLastLog.Store(&errStr)
+			s.storeDirectorStatus("Check.Failed")
 			s.Logf(LevelError, "director: Drone[%d] precheck failed: %v", assigning.ID(), err)
 		} else {
-			s.directorCheckPassed = true
+			s.directorCheckPassed.Store(true)
+			s.storeDirectorStatus("Check.Successed")
+			s.directorLogger("Inspectors passed")
 		}
 	}()
 	writeJson(rw, http.StatusOK, Map{
@@ -291,31 +329,41 @@ func (s *Server) routeDirectorCheck(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request) {
-	s.directorMux.Lock()
-	if s.director == nil {
-		s.directorMux.Unlock()
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+	dt := s.director.Load()
+	if dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
 		return
 	}
-	assigning := s.director.Assigning()
-	if assigning == nil {
+	if !s.directorCheckPassed.Load() {
 		s.directorMux.Unlock()
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
-		return
-	}
-	if !s.directorCheckPassed {
 		writeJson(rw, http.StatusConflict, &APIError{
 			Error: "PrecheckRequired",
 		})
 		return
 	}
+	s.directorMux.Lock()
+	if dt = s.director.Load(); dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
+	assigning := dt.Assigning()
+	if assigning == nil {
+		s.directorMux.Unlock()
+		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+		return
+	}
+	s.storeDirectorStatus("Transfering")
 	go func() {
-		defer s.directorMux.Unlock()
-		err := s.director.TransferDrone(s.directorAssignCtx, s.directorLogger)
+		err := dt.TransferDrone(s.directorAssignCtx, s.directorLogger)
+		s.directorMux.Unlock()
 		if err != nil {
 			errStr := err.Error()
 			s.directorLastLog.Store(&errStr)
+			s.storeDirectorStatus("Transfer.Failed")
 			s.Logf(LevelError, "director: Drone[%d] transfer failed: %v", assigning.ID(), err)
+		} else {
+			s.storeDirectorStatus("Transfer.Successed")
+			s.directorAssigned.Store((int32)(dt.ArrivedIndex()))
 		}
 	}()
 	writeJson(rw, http.StatusOK, Map{
@@ -324,36 +372,53 @@ func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request
 }
 
 func (s *Server) routeDirectorCancel(rw http.ResponseWriter, req *http.Request) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	if s.director == nil {
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+	dt := s.director.Load()
+	if dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
 		return
 	}
-	s.directorAssignCancel()
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	if s.directorAssignCancel != nil {
+		s.directorAssignCancel()
+	}
 
 	s.directorMux.Lock()
 	defer s.directorMux.Unlock()
-	assigning := s.director.CancelDroneAssign()
+	assigning := dt.CancelDroneAssign()
 	s.directorAssigningId.Store(0)
 	if assigning == nil {
 		rw.WriteHeader(http.StatusNoContent)
 		return
 	}
+	s.directorStatus.Store(nil)
 	writeJson(rw, http.StatusOK, Map{
 		"id": assigning.ID(),
 	})
 }
 
 func (s *Server) routeDirectorPoll(rw http.ResponseWriter, req *http.Request) {
-	lp := s.directorLastLog.Load()
-	l := ""
-	if lp != nil {
-		l = *lp
+	if s.director.Load() == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
 	}
-	id := s.directorAssigningId.Load()
-	writeJson(rw, http.StatusOK, Map{
-		"log":       l,
-		"assigning": id,
-	})
+	var data struct {
+		Assigning int64  `json:"assigning"`
+		Assigned  int32  `json:"assigned"`
+		Total     int32  `json:"total"`
+		Ready     bool   `json:"ready"`
+		Status    string `json:"status"`
+		Log       string `json:"log"`
+	}
+	data.Assigning = s.directorAssigningId.Load()
+	data.Assigned = s.directorAssigned.Load()
+	data.Total = s.directorTotalSlots.Load()
+	data.Ready = s.directorCheckPassed.Load()
+	if ptr := s.directorStatus.Load(); ptr != nil {
+		data.Status = *ptr
+	}
+	if ptr := s.directorLastLog.Load(); ptr != nil {
+		data.Log = *ptr
+	}
+	writeJson(rw, http.StatusOK, data)
 }

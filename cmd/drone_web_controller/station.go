@@ -117,6 +117,9 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 				if cancel, ok := pingTickers[d.ID()]; ok {
 					cancel()
 				}
+				go func() {
+					s.Log(LevelWarn, "Disable fence:", d.DisableFence(context.Background()))
+				}()
 				ctx, cancel := context.WithCancel(context.Background())
 				pingTickers[d.ID()] = cancel
 				go func(ctx context.Context, d drone.Drone) {
