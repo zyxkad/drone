@@ -2,6 +2,9 @@
 name: Create tagged release
 on: push
 
+permissions:
+  content: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
