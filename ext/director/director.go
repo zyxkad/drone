@@ -33,6 +33,7 @@ type InspectorFunc = func(ctx context.Context, dr drone.Drone, logger func(strin
 type Director struct {
 	controller drone.Controller
 	height     float32
+	heading    float32
 	points     []*drone.Gps
 	arrived    []drone.Drone
 	assigning  drone.Drone
@@ -44,6 +45,7 @@ func NewDirector(controller drone.Controller, points []*drone.Gps) *Director {
 	return &Director{
 		controller: controller,
 		height:     4,
+		heading:    0,
 		points:     points,
 		arrived:    make([]drone.Drone, len(points)),
 	}
@@ -56,6 +58,14 @@ func (d *Director) Height() float32 {
 
 func (d *Director) SetHeight(h float32) {
 	d.height = h
+}
+
+func (d *Director) Heading() float32 {
+	return d.heading
+}
+
+func (d *Director) SetHeading(h float32) {
+	d.heading = h
 }
 
 func (d *Director) Points() []*drone.Gps {
@@ -171,6 +181,7 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	if pos == nil {
 		return errors.New("Drone GPS is nil")
 	}
+	logger("Current pos: " + pos.String())
 	if diff := d.inspectAt.DistanceTo(pos); diff > 0.1 {
 		return fmt.Errorf("Drone unexpectedly moved %.2fm, please do check again", diff)
 	}
@@ -182,9 +193,10 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		return pos.DistanceAltComparator(a, b) < 0
 	})
 	d.points[aind], d.points[ind] = d.points[ind], d.points[aind]
-	endPos := d.points[aind]
-	midPos := endPos.Clone()
+	midPos := d.points[aind].Clone()
 	midPos.Alt = startPos.Alt
+	endPos := midPos.Clone()
+	endPos.Alt = pos.Alt + 1.5
 
 	if mode := dr.GetMode(); mode != 0 {
 		return fmt.Errorf("Drone mode is not 0, got %d", mode)
@@ -198,11 +210,11 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	logger("Taking off")
+	logger(fmt.Sprintf("Taking off to %.3f", d.height))
 	if err := dr.UpdateMode(ctx, 4 /* GUIDED */); err != nil {
 		return fmt.Errorf("Cannot switch mode to GUIDED: %w", err)
 	}
-	if err := dr.Takeoff(ctx); err != nil {
+	if err := dr.TakeoffWithHeight(ctx, d.height); err != nil {
 		return fmt.Errorf("Cannot takeoff: %w", err)
 	}
 	select {
@@ -210,32 +222,25 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	logger("Moving up: " + startPos.String())
-	if err := dr.MoveTo(ctx, startPos); err != nil {
+	logger("Moving to target: " + midPos.String())
+	if err := dr.MoveUntilReached(ctx, midPos, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
-	}
-	if err := dr.WaitUntilReached(ctx, startPos, reachRadius); err != nil {
-		dr.Land(ctx)
-		return err
-	}
-	logger("Moving to target top: " + midPos.String())
-	if err := dr.MoveTo(ctx, midPos); err != nil {
-		dr.Land(ctx)
-		return fmt.Errorf("Cannot move: %w", err)
-	}
-	if err := dr.WaitUntilReached(ctx, midPos, reachRadius); err != nil {
-		dr.Land(ctx)
-		return err
 	}
 	logger("Moving down: " + endPos.String())
-	if err := dr.MoveTo(ctx, endPos); err != nil {
+	if err := dr.MoveUntilReached(ctx, endPos, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
-	if err := dr.WaitUntilReached(ctx, endPos, reachRadius); err != nil {
+	logger(fmt.Sprintf("Rotating to %.3f", d.heading))
+	if err := dr.RotateYaw(ctx, d.heading); err != nil {
 		dr.Land(ctx)
-		return err
+		return fmt.Errorf("Cannot move: %w", err)
+	}
+	select {
+	case <-time.After(time.Second * 5):
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	logger("Landing")
 	if err := dr.Land(ctx); err != nil {

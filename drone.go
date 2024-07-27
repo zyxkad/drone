@@ -49,6 +49,7 @@ type Drone interface {
 	Arm(ctx context.Context) error
 	Disarm(ctx context.Context) error
 	Takeoff(ctx context.Context) error
+	TakeoffWithHeight(ctx context.Context, height float32) error
 	Land(ctx context.Context) error
 	Home(ctx context.Context) error
 	// Hold make the drone hold at current position
@@ -56,6 +57,11 @@ type Drone interface {
 	// MoveTo make the drone hold at specific position
 	// It does not wait the drone complete its action
 	MoveTo(ctx context.Context, pos *Gps) error
+	MoveToYaw(ctx context.Context, pos *Gps, heading float32) error
+	MoveUntilReached(ctx context.Context, pos *Gps, radius float32) error
+	MoveWithYawUntilReached(ctx context.Context, pos *Gps, heading float32, radius float32) error
+	RotateYaw(ctx context.Context, yaw float32) error
+	RotateUntilYaw(ctx context.Context, yaw, diff float32) error
 
 	// SetMission clear the old mission and push new missions
 	SetMission(ctx context.Context, path []*Gps) error
@@ -63,7 +69,6 @@ type Drone interface {
 	StartMission(ctx context.Context, startIndex, endIndex int) error
 	// id is the waypoint index set by SetMission
 	WaitUntilArrived(ctx context.Context, id int) error
-	WaitUntilReached(ctx context.Context, pos *Gps, radius float32) error
 	WaitUntilReady(ctx context.Context) error
 
 	FenceAbility

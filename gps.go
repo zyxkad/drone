@@ -60,11 +60,11 @@ func GPSFromPos(v *vec3.T) *Gps {
 }
 
 func (g *Gps) String() string {
-	return fmt.Sprintf("Gps{ Lat: %.6f, Lon: %.6f, Alt: %.4fm }", g.Lat, g.Lon, g.Alt)
+	return fmt.Sprintf("Gps{ Lat: %.7f, Lon: %.7f, Alt: %.3fm }", g.Lat, g.Lon, g.Alt)
 }
 
 func (g *Gps) ToWGS84() (lat, lon int32) {
-	return (int32)(lat * 1e7), (int32)(lon * 1e7)
+	return (int32)(g.Lat * 1e7), (int32)(g.Lon * 1e7)
 }
 
 // ToPos convert a gps position to a relative vec3 position to the center of the Earth
@@ -209,8 +209,8 @@ func (g *Gps) FromRelatives(rels []*vec3.T, heading float32) []*Gps {
 		p.Alt += r[2]
 		s1, c1 := math.Sincos((float64)(heading * math.Pi / 180))
 		s, c := (float32)(s1), (float32)(c1)
-		p.MoveToNorth(r[0]*s + r[1]*c)
-		p.MoveToEast(r[1]*s - r[0]*c)
+		p.MoveToEast(r[0]*s + r[1]*c)
+		p.MoveToNorth(r[1]*s - r[0]*c)
 		l[i] = p
 	}
 	return l

@@ -212,10 +212,11 @@ func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
 	defer s.directorMux.Unlock()
 	gpsList := payload.Origin.FromRelatives(payload.Slots, payload.Heading)
 	dt = director.NewDirector(s.controller, gpsList)
+	dt.SetHeading(payload.Heading)
 	if payload.Height != 0 {
 		dt.SetHeight(payload.Height)
 	}
-	dt.UseInspector(preflight.NewGpsTypeChecker(), preflight.NewAttitudeChecker(5, 0.1), preflight.NewBatteryChecker(16))
+	dt.UseInspector(preflight.NewGpsTypeChecker(), preflight.NewAttitudeChecker(5, 0.1), preflight.NewBatteryChecker(14))
 	s.director.Store(dt)
 	s.directorTotalSlots.Store((int32)(len(payload.Slots)))
 	s.directorAssigned.Store(0)
@@ -363,7 +364,7 @@ func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request
 			s.Logf(LevelError, "director: Drone[%d] transfer failed: %v", assigning.ID(), err)
 		} else {
 			s.storeDirectorStatus("Transfer.Successed")
-			s.directorAssigned.Store((int32)(dt.ArrivedIndex()))
+			s.directorAssigned.Store((int32)(dt.ArrivedIndex() + 1))
 		}
 	}()
 	writeJson(rw, http.StatusOK, Map{
@@ -372,6 +373,7 @@ func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request
 }
 
 func (s *Server) routeDirectorCancel(rw http.ResponseWriter, req *http.Request) {
+	s.directorCheckPassed.Store(false)
 	dt := s.director.Load()
 	if dt == nil {
 		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)

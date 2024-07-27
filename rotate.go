@@ -30,9 +30,9 @@ type Rotate struct {
 
 func RotateFromPi(roll, pitch, yaw float32) *Rotate {
 	return &Rotate{
-		Roll:  roll * math.Pi / 180,
-		Pitch: pitch * math.Pi / 180,
-		Yaw:   yaw * math.Pi / 180,
+		Roll:  roll / math.Pi * 180,
+		Pitch: pitch / math.Pi * 180,
+		Yaw:   yaw / math.Pi * 180,
 	}
 }
 

@@ -19,6 +19,7 @@ package ardupilot
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
@@ -71,9 +72,13 @@ func (d *Drone) armOrDisarm(ctx context.Context, param1, param2 float32) error {
 
 // Takeoff should be called in POSHOLD or GUIDED mode
 func (d *Drone) Takeoff(ctx context.Context) error {
+	return d.TakeoffWithHeight(ctx, 2.5)
+}
+
+func (d *Drone) TakeoffWithHeight(ctx context.Context, height float32) error {
 	if err := d.SendCommandLongOrError(ctx, nil, common.MAV_CMD_NAV_TAKEOFF,
 		0, 0, 0,
-		drone.NaN, 0, 0, 2.5); err != nil {
+		drone.NaN, 0, 0, height); err != nil {
 		return err
 	}
 	d.status.Store((uint32)(drone.StatusTakenoff))
@@ -123,28 +128,57 @@ func (d *Drone) MoveTo(ctx context.Context, pos *drone.Gps) error {
 		TimeBootMs:      d.controller.GetBootTimeMs(),
 		TargetSystem:    (byte)(d.ID()),
 		TargetComponent: d.component,
-		CoordinateFrame: common.MAV_FRAME_GLOBAL_INT,
+		CoordinateFrame: common.MAV_FRAME_GLOBAL,
 		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
 		LatInt:          lat,
 		LonInt:          lon,
 		Alt:             pos.Alt,
+
+		// Vx:  0.8,
+		// Vy:  0.8,
+		// Vz:  0.5,
+		// Afx: 0.5,
+		// Afy: 0.5,
+		// Afz: 0.5,
 	})
 }
 
-// func (d *Drone) MoveToWithHeading(ctx context.Context, pos *drone.Gps, heading float32) error {
-// 	lat, lon := pos.ToWGS84()
-// 	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
-// 		TimeBootMs:      d.controller.GetBootTimeMs(),
-// 		TargetSystem:    (byte)(d.ID()),
-// 		TargetComponent: d.component,
-// 		CoordinateFrame: common.MAV_FRAME_GLOBAL_INT,
-// 		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
-// 		LatInt:          lat,
-// 		LonInt:          lon,
-// 		Alt:             pos.Alt,
-// 		Yaw:             heading,
-// 	})
-// }
+// MoveToYaw requires the drone in GUIDED(4) mode
+// heading is the yaw angle in degrees
+func (d *Drone) MoveToYaw(ctx context.Context, pos *drone.Gps, heading float32) error {
+	lat, lon := pos.ToWGS84()
+	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
+		TimeBootMs:      d.controller.GetBootTimeMs(),
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		CoordinateFrame: common.MAV_FRAME_GLOBAL,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+		LatInt:          lat,
+		LonInt:          lon,
+		Alt:             pos.Alt,
+		Yaw:             heading * math.Pi / 180,
+
+		// Vx:      0.5,
+		// Vy:      0.5,
+		// Vz:      0.5,
+		// Afx:     0.25,
+		// Afy:     0.25,
+		// Afz:     0.25,
+		// YawRate: 10 * math.Pi / 180,
+	})
+}
+
+func (d *Drone) RotateYaw(ctx context.Context, yaw float32) error {
+	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
+		TimeBootMs:      d.controller.GetBootTimeMs(),
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		CoordinateFrame: common.MAV_FRAME_GLOBAL,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_X_IGNORE | common.POSITION_TARGET_TYPEMASK_Y_IGNORE | common.POSITION_TARGET_TYPEMASK_Z_IGNORE | common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE,
+		Yaw:             yaw * math.Pi / 180,
+		// YawRate:         10 * math.Pi / 180,
+	})
+}
 
 func (d *Drone) SetMission(ctx context.Context, path []*drone.Gps) error {
 	if len(path) > 0xffff {
@@ -227,12 +261,83 @@ func (d *Drone) WaitUntilArrived(ctx context.Context, id int) error {
 	return nil
 }
 
-func (d *Drone) WaitUntilReached(ctx context.Context, target *drone.Gps, radius float32) error {
+func (d *Drone) MoveUntilReached(ctx context.Context, target *drone.Gps, radius float32) error {
+	if err := d.MoveTo(ctx, target); err != nil {
+		return err
+	}
+	count := 0
+	for {
+		dist := d.GetGPS().DistanceTo(target)
+		if dist <= radius {
+			break
+		}
+		select {
+		case <-time.After(time.Millisecond * 250):
+			count++
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if count > 10 {
+			count = 0
+			if err := d.MoveTo(ctx, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Drone) MoveWithYawUntilReached(ctx context.Context, target *drone.Gps, heading float32, radius float32) error {
+	if err := d.MoveToYaw(ctx, target, heading); err != nil {
+		return err
+	}
+	count := 0
 	for d.GetGPS().DistanceTo(target) > radius {
 		select {
 		case <-time.After(time.Millisecond * 250):
+			count++
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+		if count > 10 {
+			count = 0
+			if err := d.MoveToYaw(ctx, target, heading); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Drone) RotateUntilYaw(ctx context.Context, yaw, diff float32) error {
+	if err := d.RotateYaw(ctx, yaw); err != nil {
+		return err
+	}
+	count := 0
+	for {
+		yd := d.GetRotate().Yaw - yaw
+		if yd > 180 {
+			yd = 360 - yd
+		} else if yd < -180 {
+			yd = -360 - yd
+		}
+		if yd < 0 {
+			yd = -yd
+		}
+		if yd <= diff {
+			break
+		}
+		select {
+		case <-time.After(time.Millisecond * 250):
+			count++
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if count > 10 {
+			count = 0
+			if err := d.RotateYaw(ctx, yaw); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
