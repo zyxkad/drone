@@ -16,42 +16,4 @@
 
 package main
 
-import (
-	"flag"
-	"fmt"
-	"log"
-	"net/http"
-)
-
-var (
-	addr string = "localhost:5050"
-)
-
-var (
-	logsDir = "logs"
-)
-
-func parseFlags() {
-	flag.StringVar(&addr, "addr", addr, "The address the http server going to listen on")
-	flag.Parse()
-}
-
-func main() {
-	parseFlags()
-	subCmd := flag.Arg(0)
-	if subCmd == "license" {
-		fmt.Println(LICENSE_LONG)
-		return
-	}
-	fmt.Print(LICENSE_SHORT)
-
-	initGlobalLogger()
-
-	server := NewServer()
-	log.Printf("Drone web controller %s starting ...", Version)
-	log.Println("Server starting at", "http://"+addr)
-	err := http.ListenAndServe(addr, server.Handler())
-	if err != nil {
-		log.Println("Serve error:", err)
-	}
-}
+var Version string = "dev"
