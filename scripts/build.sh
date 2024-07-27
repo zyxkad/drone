@@ -26,5 +26,7 @@ for p in "${available_platforms[@]}"; do
 		target="${target}.exe"
 	fi
 	echo "Building $target ..."
-	GOOS=$os GOARCH=$arch go build -o "$target" -ldflags "$ldflags" "$@" || exit $?
+	( GOOS=$os GOARCH=$arch go build -o "$target" -ldflags "$ldflags" "$@" || exit $? ) &
 done
+
+wait
