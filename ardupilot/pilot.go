@@ -234,6 +234,11 @@ func (d *Drone) handleMessage(msg message.Message) {
 		d.controller.sendEvent(&drone.EventDroneConnected{
 			Drone: d,
 		})
+		{
+			tctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+			go d.UpdateMessageInterval(tctx, (*common.MessageBatteryStatus)(nil).GetID(), time.Second*3)
+			_ = cancel
+		}
 	}
 
 	msgId := msg.GetID()
