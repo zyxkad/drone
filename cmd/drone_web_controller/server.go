@@ -28,10 +28,6 @@ import (
 
 	"github.com/zyxkad/drone"
 	"github.com/zyxkad/drone/ext/director"
-
-	// TODO: BEGIN TMP TEST
-	"github.com/bluenviron/gomavlib/v3"
-	"github.com/zyxkad/drone/ardupilot"
 )
 
 type Server struct {
@@ -79,21 +75,6 @@ func NewServer() *Server {
 		},
 	}
 	s.buildRoute()
-
-	// TODO: BEGIN TMP TEST
-	controller, err := ardupilot.NewController(&gomavlib.EndpointUDPBroadcast{
-		BroadcastAddress: "255.255.255.255:14555",
-		LocalAddress:     "0.0.0.0:14550",
-	})
-	if err != nil {
-		panic(err)
-	}
-	s.controller = controller
-	eventCh := dupChannel(s.controller.Context(), s.controller.Events(), 2)
-	go s.forwardStation(s.controller, eventCh[0], "127.0.0.1:14551")
-	go s.pollStation(s.controller, eventCh[1])
-	// TODO: END TMP TEST
-
 	return s
 }
 

@@ -113,10 +113,7 @@ func (s *Server) routeLoraConnectGET(rw http.ResponseWriter, req *http.Request) 
 }
 
 func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request) {
-	var payload struct {
-		Device   string `json:"device"`
-		BaudRate int    `json:"baudRate"`
-	}
+	var payload drone.Endpoint
 	if !parseRequestBody(rw, req, &payload) {
 		return
 	}
@@ -127,10 +124,14 @@ func (s *Server) routeLoraConnectPOST(rw http.ResponseWriter, req *http.Request)
 		writeJson(rw, http.StatusConflict, apiRespTargetIsExist)
 		return
 	}
-	controller, err := ardupilot.NewController(&gomavlib.EndpointSerial{
-		Device: payload.Device,
-		Baud:   payload.BaudRate,
-	})
+	conf, ok := payload.GetRaw().(gomavlib.EndpointConf)
+	if !ok {
+		writeJson(rw, http.StatusBadRequest, &APIError{
+			Error: "UnsupportEndpointType",
+		})
+		return
+	}
+	controller, err := ardupilot.NewController(conf)
 	if err != nil {
 		writeJson(rw, http.StatusInternalServerError, &APIError{
 			Error:   "TargetSetupError",

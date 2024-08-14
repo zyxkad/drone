@@ -266,31 +266,32 @@ func (r *RTK) ActivateRTCM(satelliteCfg SatelliteCfg) error {
 	if err := r.configureMessageRate(0xF5, UBX_RTCM3_1005, 5); err != nil {
 		return err
 	}
+	const MessageRate = 5
 	if satelliteCfg.GPS {
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1077, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1077, MessageRate); err != nil {
 			return err
 		}
 	}
 	if satelliteCfg.GLONASS {
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1087, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1087, MessageRate); err != nil {
 			return err
 		}
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1230, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1230, MessageRate); err != nil {
 			return err
 		}
 	}
 	if satelliteCfg.Galileo {
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1097, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1097, MessageRate); err != nil {
 			return err
 		}
 	}
 	if satelliteCfg.BeiDou {
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1127, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_1127, MessageRate); err != nil {
 			return err
 		}
 	}
 	if satelliteCfg.PVT {
-		if err := r.configureMessageRate(0xF5, UBX_RTCM3_4072, 1); err != nil {
+		if err := r.configureMessageRate(0xF5, UBX_RTCM3_4072, MessageRate); err != nil {
 			return err
 		}
 	}
