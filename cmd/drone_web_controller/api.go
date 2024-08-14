@@ -208,6 +208,7 @@ func (s *Server) routeRtkConnectPOST(rw http.ResponseWriter, req *http.Request) 
 	go s.processRTKConnect(s.rtk, s.rtkClosed)
 	go s.processRTKUBX(s.rtk, s.rtkClosed)
 	go s.broadcastRTKRTCM(s.rtk, s.rtkClosed)
+	go s.runRTKServer(s.rtk, s.rtkClosed, "tcp", "127.0.0.1:10571")
 }
 
 func (s *Server) routeRtkConnectDELETE(rw http.ResponseWriter, req *http.Request) {

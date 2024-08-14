@@ -25,6 +25,7 @@ github.com/bluenviron/gomavlib/v3/pkg/x25
 github.com/creack/goselect
 # github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
 ## explicit; go 1.11
+github.com/daedaleanai/ublox/nmea
 github.com/daedaleanai/ublox/ubx
 # github.com/ebitengine/purego v0.7.1
 ## explicit; go 1.18

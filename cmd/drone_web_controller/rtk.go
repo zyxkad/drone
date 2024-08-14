@@ -17,6 +17,7 @@
 package main
 
 import (
+	"net"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +35,28 @@ const (
 	RtkReady    RTKStatus = "READY"
 	RtkOK       RTKStatus = "OK"
 )
+
+func (s *Server) runRTKServer(rtk *drone.RTK, closeSig <-chan struct{}, network string, addr string) {
+	p := rtk.GetProxy()
+	l, err := net.Listen(network, addr)
+	if err != nil {
+		s.Logf(LevelError, "Failed to start RTK server: %v", err)
+		return
+	}
+	s.Logf(LevelInfo, "RTK server started at %s://%s", network, addr)
+	done := make(chan struct{}, 0)
+	defer close(done)
+	go func() {
+		defer l.Close()
+		select {
+		case <-closeSig:
+		case <-done:
+		}
+	}()
+	if err := p.Serve(l); err != nil {
+		s.Logf(LevelError, "RTK server closed: %v", err)
+	}
+}
 
 func (s *Server) processRTKConnect(rtk *drone.RTK, closeSig <-chan struct{}) {
 	for version := range rtk.ConnectSignal() {
@@ -53,9 +76,11 @@ func (s *Server) processRTKConnect(rtk *drone.RTK, closeSig <-chan struct{}) {
 }
 
 func (s *Server) processRTKUBX(rtk *drone.RTK, closeSig <-chan struct{}) {
+	c := rtk.GetProxy().NewConn()
+	defer c.Close()
 	for {
 		select {
-		case msg := <-rtk.UBXMessages():
+		case msg := <-c.UBXMessages():
 			switch msg := msg.(type) {
 			case *ubx.NavSvin:
 				type SurveyInMsg struct {
@@ -107,6 +132,8 @@ func (s *Server) broadcastRTKRTCM(rtk *drone.RTK, closeSig <-chan struct{}) {
 		defer s.mux.Unlock()
 		s.rtkStatus = RtkNone
 	}()
+	c := rtk.GetProxy().NewConn()
+	defer c.Close()
 
 	sateNum2name := []struct {
 		num  int
@@ -169,7 +196,7 @@ func (s *Server) broadcastRTKRTCM(rtk *drone.RTK, closeSig <-chan struct{}) {
 
 	for {
 		select {
-		case frame := <-rtk.RTCMFrames():
+		case frame := <-c.RTCMMessages():
 			now := time.Now()
 			msg := frame.Message()
 			forward := true

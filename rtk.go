@@ -17,17 +17,16 @@
 package drone
 
 import (
-	"bufio"
-	"errors"
 	"io"
-	"os"
+	"net"
 	"sync/atomic"
 	"time"
 
 	"github.com/daedaleanai/ublox/ubx"
-	"github.com/go-gnss/rtcm/rtcm3"
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
+
+	"github.com/zyxkad/drone/ext/rtk"
 )
 
 type Device struct {
@@ -58,15 +57,13 @@ func (d *Device) String() string {
 }
 
 type RTK struct {
-	port serial.Port
-	br   *bufio.Reader
+	rw *ReconnectableWrapper
+	p  *rtk.Proxy
 
 	cfg RTKConfig
 
 	statusVersion atomic.Uint32
 	connectSig    chan uint32
-	rtcmMsgs      chan *RTCMFrame
-	ubxMsgs       chan ubx.Message
 	opened        atomic.Int32
 	closed        atomic.Bool
 }
@@ -78,21 +75,20 @@ type RTKConfig struct {
 
 func OpenRTK(cfg RTKConfig) (*RTK, error) {
 	r := &RTK{
-		br:         bufio.NewReader(nil),
 		cfg:        cfg,
 		connectSig: make(chan uint32, 2),
-		rtcmMsgs:   make(chan *RTCMFrame, 8),
-		ubxMsgs:    make(chan ubx.Message, 8),
 	}
-	if err := r.Open(); err != nil {
+	var err error
+	if r.rw, err = NewReconnectableWrapper(r.open); err != nil {
 		return nil, err
 	}
+	r.p = rtk.NewProxy(r.rw)
 	return r, nil
 }
 
-func (r *RTK) setupPort() error {
+func (r *RTK) setupPort(port serial.Port) error {
 	mode := ubx.CfgPrt1CharLen&0xc0 | ubx.CfgPrt1Parity&0x800 | ubx.CfgPrt1NStopBits&0x2000
-	if err := r.sendUBXMessage(ubx.CfgPrt1{
+	if err := sendUBXMessage(port, ubx.CfgPrt1{
 		PortID:          0x00,
 		Mode:            mode,
 		BaudRate_bits_s: (uint32)(r.cfg.BaudRate),
@@ -101,7 +97,7 @@ func (r *RTK) setupPort() error {
 	}); err != nil {
 		return err
 	}
-	if err := r.sendUBXMessage(ubx.CfgPrt1{
+	if err := sendUBXMessage(port, ubx.CfgPrt1{
 		PortID:          0x03,
 		Mode:            mode,
 		BaudRate_bits_s: (uint32)(r.cfg.BaudRate),
@@ -119,17 +115,21 @@ func (r *RTK) Config() RTKConfig {
 
 func (r *RTK) Close() error {
 	r.closed.CompareAndSwap(false, true)
-	return r.port.Close()
+	return r.p.Close()
 }
 
-func (r *RTK) Open() error {
+func (r *RTK) GetProxy() *rtk.Proxy {
+	return r.p
+}
+
+func (r *RTK) open() (io.ReadWriteCloser, error) {
 	if r.closed.Load() {
-		return os.ErrClosed
+		return nil, net.ErrClosed
 	}
-	if !r.opened.CompareAndSwap(0, 1) {
-		return errors.New("port opened")
+	if r.opened.CompareAndSwap(1, 0) {
+		r.updateStatus()
+		time.Sleep(time.Second * 3)
 	}
-	defer r.opened.CompareAndSwap(1, 0)
 	port, err := serial.Open(r.cfg.Device, &serial.Mode{
 		BaudRate: r.cfg.BaudRate,
 		DataBits: 8,
@@ -137,32 +137,15 @@ func (r *RTK) Open() error {
 		StopBits: serial.OneStopBit,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	r.port = port
-	r.br.Reset(port)
-	if err := r.setupPort(); err != nil {
-		return err
+	if err := r.setupPort(port); err != nil {
+		return nil, err
 	}
-	r.updateStatus()
-	r.opened.Store(2)
-	go func() {
-		err := r.handleMessages()
+	if r.opened.CompareAndSwap(0, 1) { // TODO: code review
 		r.updateStatus()
-		r.opened.Store(0)
-		if err == nil {
-			return
-		}
-		time.Sleep(time.Second * 3)
-		for !r.closed.Load() {
-			err := r.Open()
-			if err == nil || err == os.ErrClosed {
-				return
-			}
-			time.Sleep(time.Second)
-		}
-	}()
-	return nil
+	}
+	return port, nil
 }
 
 // StatusVersion returns current status of the RTK
@@ -189,21 +172,17 @@ func (r *RTK) updateStatus() {
 	}
 }
 
-func (r *RTK) RTCMFrames() <-chan *RTCMFrame {
-	return r.rtcmMsgs
-}
-
-func (r *RTK) UBXMessages() <-chan ubx.Message {
-	return r.ubxMsgs
-}
-
-func (r *RTK) sendUBXMessage(msg ubx.Message) error {
+func sendUBXMessage(w io.Writer, msg ubx.Message) error {
 	if buf, err := ubx.Encode(msg); err != nil {
 		return err
-	} else if _, err := r.port.Write(buf); err != nil {
+	} else if _, err := w.Write(buf); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (r *RTK) sendUBXMessage(msg ubx.Message) error {
+	return sendUBXMessage(r.p, msg)
 }
 
 func (r *RTK) configureMessageRate(class, id byte, rate byte) error {
@@ -316,73 +295,4 @@ func (r *RTK) ActivateRTCM(satelliteCfg SatelliteCfg) error {
 		}
 	}
 	return nil
-}
-
-func (r *RTK) handleMessages() error {
-	newRtcmMsg := make(chan struct{}, 0)
-	newUbxMsg := make(chan struct{}, 0)
-	for {
-		b, err := r.br.ReadByte()
-		if err != nil {
-			return err
-		}
-		switch b {
-		case rtcm3.FramePreamble:
-			if err := r.br.UnreadByte(); err != nil {
-				return err
-			}
-			if fm, err := rtcm3.DeserializeFrame(r.br); err == nil {
-				f := &RTCMFrame{
-					Frame: fm,
-				}
-				select {
-				case newRtcmMsg <- struct{}{}:
-				default:
-				}
-				go func() {
-					select {
-					case r.rtcmMsgs <- f:
-					case <-newRtcmMsg:
-					}
-				}()
-			}
-		case 0xb5: // For UBX message
-			if err := r.br.UnreadByte(); err != nil {
-				return err
-			}
-			header, err := r.br.Peek(8)
-			if err != nil {
-				return err
-			}
-			if header[1] != 0x62 {
-				break
-			}
-			size := (int)(header[4]) | (int)(header[5])<<8
-			buf := make([]byte, 6+size+2)
-			if _, err := io.ReadFull(r.br, buf); err != nil {
-				return err
-			}
-			if msg, err := ubx.Decode(buf); err == nil {
-				select {
-				case newUbxMsg <- struct{}{}:
-				default:
-				}
-				go func() {
-					select {
-					case r.ubxMsgs <- msg:
-					case <-newUbxMsg:
-					}
-				}()
-			}
-		case '$': // TODO: For NMEA message (is this necessary?)
-		}
-	}
-}
-
-type RTCMFrame struct {
-	rtcm3.Frame
-}
-
-func (f *RTCMFrame) Message() rtcm3.Message {
-	return rtcm3.DeserializeMessage(f.Payload)
 }
