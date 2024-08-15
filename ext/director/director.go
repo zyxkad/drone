@@ -31,14 +31,15 @@ type InspectorFunc = func(ctx context.Context, dr drone.Drone, logger func(strin
 // Director directs drone swarm to a set of points
 // Director is not thread-safe. Invoker should ensure the use of Director is atomic
 type Director struct {
-	controller drone.Controller
-	height     float32
-	heading    float32
-	points     []*drone.Gps
-	arrived    []drone.Drone
-	assigning  drone.Drone
-	inspectAt  *drone.Gps
-	inspectors []InspectorFunc
+	controller  drone.Controller
+	height      float32
+	heading     float32
+	points      []*drone.Gps
+	arrived     []drone.Drone
+	assigning   drone.Drone
+	inspectAt   *drone.Gps
+	inspectors  []InspectorFunc
+	cancelFlash context.CancelFunc
 }
 
 func NewDirector(controller drone.Controller, points []*drone.Gps) *Director {
@@ -102,6 +103,63 @@ func (d *Director) UseInspector(inspectors ...InspectorFunc) {
 	d.inspectors = append(d.inspectors, inspectors...)
 }
 
+var (
+	rbgColorSeq = []drone.Color{
+		drone.Color{R: 0xff, G: 0, B: 0},
+		drone.Color{R: 0xff, G: 0, B: 0xff},
+		drone.Color{R: 0, G: 0, B: 0xff},
+		drone.Color{R: 0, G: 0xff, B: 0xff},
+		drone.Color{R: 0, G: 0xff, B: 0},
+		drone.Color{R: 0xff, G: 0xff, B: 0},
+	}
+	warnColorSeq = []drone.Color{
+		drone.Color{R: 0xff, G: 0, B: 0},
+		drone.Color{R: 0xff, G: 0xff, B: 0},
+	}
+)
+
+// flashDroneLED will flash the drone's LED
+// If round is -1, the LED will flash infinity
+func flashDroneLED(ctx context.Context, dr drone.Drone, seq []drone.Color, interval time.Duration, round int) error {
+	ld, ok := dr.(drone.LEDAbility)
+	if !ok {
+		select {
+		case <-time.After(interval * (time.Duration)(round*len(seq))):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	flash := func() {
+		for _, c := range seq {
+			ld.ActiveLED(ctx, c, interval)
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+	if round == -1 {
+		for {
+			flash()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+	} else {
+		for i := 0; i < round; i++ {
+			flash()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+}
+
 // PrepareDrone put a drone into assigning slot
 func (d *Director) PreAssignDrone(dr drone.Drone) error {
 	if d.assigning != nil {
@@ -116,13 +174,19 @@ func (d *Director) PreAssignDrone(dr drone.Drone) error {
 	}
 	d.assigning = dr
 	d.inspectAt = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	d.cancelFlash = cancel
+	go flashDroneLED(ctx, dr, rbgColorSeq, time.Second, -1)
 	return nil
 }
 
 // CancelDroneAssign clear the assigning slot
 func (d *Director) CancelDroneAssign() drone.Drone {
 	assigning := d.assigning
-	d.assigning = nil
+	if assigning != nil {
+		d.assigning = nil
+		d.cancelFlash()
+	}
 	return assigning
 }
 
@@ -163,6 +227,7 @@ func (e *InspectError) Unwrap() error {
 // PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
 func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
 	const reachRadius = 0.25
+	const maxGPSError = 0.1
 
 	dr := d.assigning
 	if dr == nil {
@@ -172,17 +237,38 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	if d.inspectAt == nil {
 		return errors.New("Drone precheck failed")
 	}
-	select {
-	case <-time.After(time.Second):
-	case <-ctx.Done():
-		return ctx.Err()
+
+	d.cancelFlash()
+	flashCtx, flashCancel := context.WithCancel(ctx)
+	defer flashCancel()
+
+	go flashDroneLED(flashCtx, dr, warnColorSeq, time.Second/2, 5)
+
+	for i := 0; i < 10 * 2; i++ {
+		if i == 5 * 2 {
+			go flashDroneLED(flashCtx, dr, warnColorSeq, time.Second/4, -1)
+		}
+		select {
+		case <-time.After(time.Second / 2):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		rotate := dr.GetRotate()
+		wantMax := (float32)(15)
+		if rotate.Pitch < -wantMax || wantMax < rotate.Pitch {
+			return fmt.Errorf("Pitch too high, got %.1f°, want %.1f°", rotate.Pitch, wantMax)
+		}
+		if rotate.Roll < -wantMax || wantMax < rotate.Roll {
+			return fmt.Errorf("Roll too high, got %.1f°, want %.1f°", rotate.Roll, wantMax)
+		}
 	}
+
 	pos := dr.GetGPS()
 	if pos == nil {
 		return errors.New("Drone GPS is nil")
 	}
 	logger("Current pos: " + pos.String())
-	if diff := d.inspectAt.DistanceTo(pos); diff > 0.1 {
+	if diff := d.inspectAt.DistanceTo(pos); diff > maxGPSError {
 		return fmt.Errorf("Drone unexpectedly moved %.2fm, please do check again", diff)
 	}
 
@@ -220,6 +306,7 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	select {
 	case <-time.After(time.Second * 5):
 	case <-ctx.Done():
+		dr.Land(ctx)
 		return ctx.Err()
 	}
 	logger("Moving to target: " + midPos.String())
@@ -240,8 +327,10 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 	select {
 	case <-time.After(time.Second * 5):
 	case <-ctx.Done():
+		dr.Land(ctx)
 		return ctx.Err()
 	}
+	flashCancel()
 	logger("Landing")
 	if err := dr.Land(ctx); err != nil {
 		return fmt.Errorf("Cannot land: %w", err)
