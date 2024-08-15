@@ -30,6 +30,7 @@ import (
 func (s *Server) buildAPIDroneRoute() {
 	s.route.HandleFunc("POST /api/drone/action", s.routeDroneAction)
 	s.route.HandleFunc("POST /api/drone/mode", s.routeDroneMode)
+	s.route.HandleFunc("POST /api/drone/fence", s.routeDroneFence)
 
 	s.route.HandleFunc("POST /api/director/init", s.routeDirectorInit)
 	s.route.HandleFunc("DELETE /api/director/destroy", s.routeDirectorDestroy)
@@ -56,16 +57,14 @@ func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
 	}
 	controller := s.Controller()
 	if controller == nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "ControllerNotExist",
+		writeJson(rw, http.StatusConflict, &APIError{
+			Error: "ControllerNotExist",
 		})
 		return
 	}
 	action := payload.Action.AsFunc()
 	if action == nil {
-		writeJson(rw, http.StatusBadRequest, Map{
-			"error": "UnsupportedAction",
-		})
+		writeJson(rw, http.StatusBadRequest, apiRespUnsupportedAction)
 		return
 	}
 	ctx := req.Context()
@@ -123,8 +122,8 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 	}
 	controller := s.Controller()
 	if controller == nil {
-		writeJson(rw, http.StatusConflict, Map{
-			"error": "ControllerNotExist",
+		writeJson(rw, http.StatusConflict, &APIError{
+			Error: "ControllerNotExist",
 		})
 		return
 	}
@@ -171,6 +170,35 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 		Failed:  len(errs),
 		Errors:  errs,
 	})
+}
+
+func (s *Server) routeDroneFence(rw http.ResponseWriter, req *http.Request) {
+	var payload struct {
+		Drone   int  `json:"drone"`
+		Disable bool `json:"disable"`
+	}
+	if !parseRequestBody(rw, req, &payload) {
+		return
+	}
+	d := s.Controller().GetDrone(payload.Drone)
+	if d == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
+	switch {
+	case payload.Disable:
+		if err := d.DisableFence(context.Background()); err != nil {
+			writeJson(rw, http.StatusInternalServerError, &APIError{
+				Error:   "ActionFailed",
+				Message: err.Error(),
+			})
+			return
+		}
+		s.Logf(LevelWarn, "Disabled fence for %d", d.ID())
+		rw.WriteHeader(http.StatusNoContent)
+	default:
+		writeJson(rw, http.StatusBadRequest, apiRespUnsupportedAction)
+	}
 }
 
 func (s *Server) directorLogger(log string) {

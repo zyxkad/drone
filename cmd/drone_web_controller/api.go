@@ -315,3 +315,7 @@ var apiRespTargetIsExist = &APIError{
 var apiRespTargetNotExist = &APIError{
 	Error: "TargetNotExist",
 }
+
+var apiRespUnsupportedAction = &APIError{
+	Error: "UnsupportedAction",
+}
