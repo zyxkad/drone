@@ -40,7 +40,6 @@ type Drone interface {
 	UpdateMode(ctx context.Context, mode int) error
 	UpdateHome(ctx context.Context, pos *Gps) error
 	// Ping requests to update some specific messages
-	// It does not wait till pong is received
 	Ping(ctx context.Context) error
 	SendMessage(msg any) error
 

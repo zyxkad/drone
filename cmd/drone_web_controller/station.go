@@ -99,6 +99,7 @@ func (s *Server) forwardStation(station drone.Controller, eventCh <-chan drone.E
 }
 
 func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Event) {
+	ctx := station.Context()
 	pingTickers := make(map[int]context.CancelFunc)
 	for {
 		select {
@@ -117,10 +118,10 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 				if cancel, ok := pingTickers[d.ID()]; ok {
 					cancel()
 				}
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(ctx)
 				pingTickers[d.ID()] = cancel
 				go func(ctx context.Context, d drone.Drone) {
-					ticker := time.NewTicker(time.Millisecond * 500)
+					ticker := time.NewTicker(time.Millisecond * 800)
 					defer ticker.Stop()
 					for i := 0; ; i++ {
 						select {
@@ -131,7 +132,7 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 								Ping:         d.GetPing().Microseconds(),
 								LastActivate: d.LastActivate().UnixMilli(),
 							})
-							if i%20 == 0 {
+							if i%13 == 0 {
 								tctx, cancel := context.WithTimeout(ctx, time.Second*3)
 								d.Ping(tctx)
 								cancel()
@@ -178,7 +179,8 @@ func (s *Server) pollStation(station drone.Controller, eventCh <-chan drone.Even
 				}
 				s.Logf(lvl, "drone[%d]: %s", event.Drone.ID(), event.Message)
 			}
-		case <-station.Context().Done():
+		case <-ctx.Done():
+			s.Log(LevelDebug, "Station destroyed")
 			return
 		}
 	}

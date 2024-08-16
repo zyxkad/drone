@@ -392,6 +392,7 @@ func (s *Server) routeDirectorTransfer(rw http.ResponseWriter, req *http.Request
 			s.Logf(LevelError, "director: Drone[%d] transfer failed: %v", assigning.ID(), err)
 		} else {
 			s.storeDirectorStatus("Transfer.Successed")
+			s.directorAssigningId.Store(0)
 			s.directorAssigned.Store((int32)(dt.ArrivedIndex() + 1))
 		}
 	}()

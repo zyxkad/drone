@@ -19,6 +19,7 @@ package ardupilot
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"time"
 
@@ -129,17 +130,17 @@ func (d *Drone) MoveTo(ctx context.Context, pos *drone.Gps) error {
 		TargetSystem:    (byte)(d.ID()),
 		TargetComponent: d.component,
 		CoordinateFrame: common.MAV_FRAME_GLOBAL,
-		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE /*| common.POSITION_TARGET_TYPEMASK_VZ_IGNORE*/ | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE /*| common.POSITION_TARGET_TYPEMASK_VZ_IGNORE*/ | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE /*| common.POSITION_TARGET_TYPEMASK_AZ_IGNORE*/ | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
 		LatInt:          lat,
 		LonInt:          lon,
 		Alt:             pos.Alt,
 
 		// Vx:  0.8,
 		// Vy:  0.8,
-		Vz: 0.2,
+		Vz: 0.1,
 		// Afx: 0.5,
 		// Afy: 0.5,
-		// Afz: 0.5,
+		Afz: 0.1,
 	})
 }
 
@@ -262,26 +263,25 @@ func (d *Drone) WaitUntilArrived(ctx context.Context, id int) error {
 }
 
 func (d *Drone) MoveUntilReached(ctx context.Context, target *drone.Gps, radius float32) error {
-	if err := d.MoveTo(ctx, target); err != nil {
-		return err
-	}
 	count := 0
 	for {
 		dist := d.GetGPS().DistanceTo(target)
 		if dist <= radius {
 			break
 		}
+		if count%10 == 0 {
+			if count%40 == 0 {
+				log.Printf("ERROR: Drone %d cannot reach target. dist=%.2f require=%.2f", d.ID(), dist, radius)
+			}
+			if err := d.MoveTo(ctx, target); err != nil {
+				return err
+			}
+		}
 		select {
 		case <-time.After(time.Millisecond * 250):
 			count++
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-		if count > 10 {
-			count = 0
-			if err := d.MoveTo(ctx, target); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -293,17 +293,16 @@ func (d *Drone) MoveWithYawUntilReached(ctx context.Context, target *drone.Gps, 
 	}
 	count := 0
 	for d.GetGPS().DistanceTo(target) > radius {
+		if count%10 == 0 {
+			if err := d.MoveToYaw(ctx, target, heading); err != nil {
+				return err
+			}
+		}
 		select {
 		case <-time.After(time.Millisecond * 250):
 			count++
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-		if count > 10 {
-			count = 0
-			if err := d.MoveToYaw(ctx, target, heading); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -327,17 +326,19 @@ func (d *Drone) RotateUntilYaw(ctx context.Context, yaw, diff float32) error {
 		if yd <= diff {
 			break
 		}
+		if count%10 == 0 {
+			if count%40 == 0 {
+				log.Printf("ERROR: Drone %d cannot turn to yaw %.2f. diff=%.2f require=%.2f", d.ID(), yaw, yd, diff)
+			}
+			if err := d.RotateYaw(ctx, yaw); err != nil {
+				return err
+			}
+		}
 		select {
 		case <-time.After(time.Millisecond * 250):
 			count++
 		case <-ctx.Done():
 			return ctx.Err()
-		}
-		if count > 10 {
-			count = 0
-			if err := d.RotateYaw(ctx, yaw); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

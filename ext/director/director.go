@@ -226,8 +226,8 @@ func (e *InspectError) Unwrap() error {
 
 // PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
 func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
-	const reachRadius = 0.25
-	const maxGPSError = 0.1
+	const reachRadius = 0.5
+	const maxGPSError = 0.2
 
 	dr := d.assigning
 	if dr == nil {

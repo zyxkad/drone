@@ -231,14 +231,14 @@ func (d *Drone) handleMessage(msg message.Message) {
 	}
 	if d.alive.CompareAndSwap(false, true) {
 		d.status.Store((uint32)(drone.StatusUnstable))
-		d.controller.sendEvent(&drone.EventDroneConnected{
-			Drone: d,
-		})
 		{
 			tctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 			go d.UpdateMessageInterval(tctx, (*common.MessageBatteryStatus)(nil).GetID(), time.Second*3)
 			_ = cancel
 		}
+		d.controller.sendEvent(&drone.EventDroneConnected{
+			Drone: d,
+		})
 	}
 
 	msgId := msg.GetID()
