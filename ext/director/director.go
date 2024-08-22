@@ -23,7 +23,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/ungerik/go3d/vec3"
+	// "github.com/ungerik/go3d/vec3"
 
 	"github.com/zyxkad/drone"
 )
@@ -78,7 +78,7 @@ func (d *Director) Points() []*drone.Gps {
 }
 
 func (d *Director) Arrived() []drone.Drone {
-	return d.arrived[:d.ArrivedIndex() + 1]
+	return d.arrived[:d.ArrivedIndex()+1]
 }
 
 func (d *Director) ArrivedIndex() int {
@@ -110,7 +110,6 @@ func (d *Director) IsDone() bool {
 func (d *Director) UseInspector(inspectors ...InspectorFunc) {
 	d.inspectors = append(d.inspectors, inspectors...)
 }
-
 
 func (d *Director) DetectSlots() {
 	i := 0
@@ -257,7 +256,7 @@ func (e *InspectError) Unwrap() error {
 // PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
 func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
 	const reachRadius = 0.8
-	const maxGPSError = 0.2
+	const maxGPSError = 0.8
 	const maxYawDiff = 10
 
 	dr := d.assigning
@@ -341,33 +340,26 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		return ctx.Err()
 	}
 	logger("Moving to target: " + midPos.String())
-	if err := dr.MoveUntilReached(ctx, midPos, reachRadius); err != nil {
+	if err := dr.MoveWithYawUntilReached(ctx, midPos, 0, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
 	logger("Moving down: " + endPos.String())
-	height := midPos.Alt - endPos.Alt
-	if err := dr.MoveNED(ctx, &vec3.T{0, 0, height}); err != nil {
+	if err := dr.MoveWithYawUntilReached(ctx, endPos, 0, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
-	select {
-	case <-time.After(time.Second * (time.Duration)(height/0.1+1)):
-	case <-ctx.Done():
-		dr.Land(ctx)
-		return ctx.Err()
-	}
-	logger(fmt.Sprintf("Rotating to %.3f", d.heading))
-	if err := dr.RotateUntilYaw(ctx, d.heading, maxYawDiff); err != nil {
-		dr.Land(ctx)
-		return fmt.Errorf("Cannot move: %w", err)
-	}
-	select {
-	case <-time.After(time.Second * 5):
-	case <-ctx.Done():
-		dr.Land(ctx)
-		return ctx.Err()
-	}
+	// logger(fmt.Sprintf("Rotating to %.3f", d.heading))
+	// if err := dr.RotateYaw(ctx, d.heading); err != nil {
+	// 	dr.Land(ctx)
+	// 	return fmt.Errorf("Cannot move: %w", err)
+	// }
+	// select {
+	// case <-time.After(time.Second * 3):
+	// case <-ctx.Done():
+	// 	dr.Land(ctx)
+	// 	return ctx.Err()
+	// }
 	flashCancel()
 	logger("Landing")
 	if err := dr.Land(ctx); err != nil {
