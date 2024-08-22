@@ -150,7 +150,7 @@ func (s *Server) routeLoraConnectDELETE(rw http.ResponseWriter, req *http.Reques
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
-		writeJson(rw, http.StatusOK, apiRespTargetNotExist)
+		writeJson(rw, http.StatusOK, apiRespControllerNotExist)
 		return
 	}
 	s.controller.Close()
@@ -318,4 +318,8 @@ var apiRespTargetNotExist = &APIError{
 
 var apiRespUnsupportedAction = &APIError{
 	Error: "UnsupportedAction",
+}
+
+var apiRespControllerNotExist = &APIError{
+	Error: "ControllerNotExist",
 }

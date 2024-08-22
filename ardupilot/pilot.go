@@ -231,11 +231,12 @@ func (d *Drone) handleMessage(msg message.Message) {
 	}
 	if d.alive.CompareAndSwap(false, true) {
 		d.status.Store((uint32)(drone.StatusUnstable))
-		{
-			tctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-			go d.UpdateMessageInterval(tctx, (*common.MessageBatteryStatus)(nil).GetID(), time.Second*3)
-			_ = cancel
-		}
+		go func(ctx context.Context) {
+			tctx, cancel := context.WithTimeout(ctx, time.Second*30)
+			defer cancel()
+			d.UpdateMessageInterval(tctx, (*common.MessageBatteryStatus)(nil).GetID(), time.Millisecond*3000)
+			d.UpdateMessageInterval(tctx, (*common.MessageAttitude)(nil).GetID(), time.Millisecond*500)
+		}(d.controller.Context())
 		d.controller.sendEvent(&drone.EventDroneConnected{
 			Drone: d,
 		})
@@ -342,6 +343,7 @@ func (d *Drone) handleMessage(msg message.Message) {
 			Drone:   d,
 			GPSType: (int)(d.gpsType),
 			GPS:     pos,
+			Rotate:  d.rotate.Load(),
 		})
 		return
 	case *common.MessageAttitude:

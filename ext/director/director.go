@@ -23,6 +23,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/ungerik/go3d/vec3"
+
 	"github.com/zyxkad/drone"
 )
 
@@ -43,13 +45,15 @@ type Director struct {
 }
 
 func NewDirector(controller drone.Controller, points []*drone.Gps) *Director {
-	return &Director{
+	d := &Director{
 		controller: controller,
 		height:     4,
 		heading:    0,
 		points:     points,
 		arrived:    make([]drone.Drone, len(points)),
 	}
+	d.DetectSlots()
+	return d
 }
 
 // Height returns the maximum height the drone allows to fly (relative to its current altitude)
@@ -71,6 +75,10 @@ func (d *Director) SetHeading(h float32) {
 
 func (d *Director) Points() []*drone.Gps {
 	return d.points
+}
+
+func (d *Director) Arrived() []drone.Drone {
+	return d.arrived[:d.ArrivedIndex() + 1]
 }
 
 func (d *Director) ArrivedIndex() int {
@@ -101,6 +109,28 @@ func (d *Director) IsDone() bool {
 
 func (d *Director) UseInspector(inspectors ...InspectorFunc) {
 	d.inspectors = append(d.inspectors, inspectors...)
+}
+
+
+func (d *Director) DetectSlots() {
+	i := 0
+	const assignDist = 2.0
+	for _, dr := range d.controller.Drones() {
+		if pos := dr.GetGPS(); pos != nil {
+			for j := i; j < len(d.points); j++ {
+				dist := pos.DistanceToNoAlt(d.points[j])
+				if dist <= assignDist {
+					d.points[i], d.points[j] = d.points[j], d.points[i]
+					d.arrived[i] = dr
+					i++
+					break
+				}
+			}
+			if i >= len(d.points) {
+				break
+			}
+		}
+	}
 }
 
 var (
@@ -226,8 +256,9 @@ func (e *InspectError) Unwrap() error {
 
 // PrepareDrone transfer the assigning drone to a farthest spot and clear the assigning slot
 func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error {
-	const reachRadius = 0.5
+	const reachRadius = 0.8
 	const maxGPSError = 0.2
+	const maxYawDiff = 10
 
 	dr := d.assigning
 	if dr == nil {
@@ -244,8 +275,8 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 
 	go flashDroneLED(flashCtx, dr, warnColorSeq, time.Second/2, 5)
 
-	for i := 0; i < 10 * 2; i++ {
-		if i == 5 * 2 {
+	for i := 0; i < 10*2; i++ {
+		if i == 5*2 {
 			go flashDroneLED(flashCtx, dr, warnColorSeq, time.Second/4, -1)
 		}
 		select {
@@ -315,12 +346,19 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		return fmt.Errorf("Cannot move: %w", err)
 	}
 	logger("Moving down: " + endPos.String())
-	if err := dr.MoveUntilReached(ctx, endPos, reachRadius); err != nil {
+	height := midPos.Alt - endPos.Alt
+	if err := dr.MoveNED(ctx, &vec3.T{0, 0, height}); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
+	select {
+	case <-time.After(time.Second * (time.Duration)(height/0.1+1)):
+	case <-ctx.Done():
+		dr.Land(ctx)
+		return ctx.Err()
+	}
 	logger(fmt.Sprintf("Rotating to %.3f", d.heading))
-	if err := dr.RotateYaw(ctx, d.heading); err != nil {
+	if err := dr.RotateUntilYaw(ctx, d.heading, maxYawDiff); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}

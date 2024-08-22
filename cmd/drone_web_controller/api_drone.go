@@ -34,6 +34,7 @@ func (s *Server) buildAPIDroneRoute() {
 
 	s.route.HandleFunc("POST /api/director/init", s.routeDirectorInit)
 	s.route.HandleFunc("DELETE /api/director/destroy", s.routeDirectorDestroy)
+	s.route.HandleFunc("GET /api/director/arrived", s.routeDirectorArrived)
 	s.route.HandleFunc("POST /api/director/assign", s.routeDirectorAssign)
 	s.route.HandleFunc("POST /api/director/check", s.routeDirectorCheck)
 	s.route.HandleFunc("POST /api/director/transfer", s.routeDirectorTransfer)
@@ -57,9 +58,7 @@ func (s *Server) routeDroneAction(rw http.ResponseWriter, req *http.Request) {
 	}
 	controller := s.Controller()
 	if controller == nil {
-		writeJson(rw, http.StatusConflict, &APIError{
-			Error: "ControllerNotExist",
-		})
+		writeJson(rw, http.StatusConflict, apiRespControllerNotExist)
 		return
 	}
 	action := payload.Action.AsFunc()
@@ -122,9 +121,7 @@ func (s *Server) routeDroneMode(rw http.ResponseWriter, req *http.Request) {
 	}
 	controller := s.Controller()
 	if controller == nil {
-		writeJson(rw, http.StatusConflict, &APIError{
-			Error: "ControllerNotExist",
-		})
+		writeJson(rw, http.StatusConflict, apiRespControllerNotExist)
 		return
 	}
 	ctx := req.Context()
@@ -180,7 +177,12 @@ func (s *Server) routeDroneFence(rw http.ResponseWriter, req *http.Request) {
 	if !parseRequestBody(rw, req, &payload) {
 		return
 	}
-	d := s.Controller().GetDrone(payload.Drone)
+	controller := s.Controller()
+	if controller == nil {
+		writeJson(rw, http.StatusConflict, apiRespControllerNotExist)
+		return
+	}
+	d := controller.GetDrone(payload.Drone)
 	if d == nil {
 		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
 		return
@@ -229,7 +231,7 @@ func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
-		writeJson(rw, http.StatusConflict, apiRespTargetNotExist)
+		writeJson(rw, http.StatusConflict, apiRespControllerNotExist)
 		return
 	}
 	if dt = s.director.Load(); dt != nil {
@@ -247,7 +249,7 @@ func (s *Server) routeDirectorInit(rw http.ResponseWriter, req *http.Request) {
 	dt.UseInspector(preflight.NewGpsTypeChecker(), preflight.NewAttitudeChecker(5, 0.1), preflight.NewBatteryChecker(14))
 	s.director.Store(dt)
 	s.directorTotalSlots.Store((int32)(len(payload.Slots)))
-	s.directorAssigned.Store(0)
+	s.directorAssigned.Store((int32)(dt.ArrivedIndex() + 1))
 	s.directorStatus.Store(nil)
 	rw.WriteHeader(http.StatusNoContent)
 }
@@ -274,6 +276,27 @@ func (s *Server) routeDirectorDestroy(rw http.ResponseWriter, req *http.Request)
 	rw.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) routeDirectorArrived(rw http.ResponseWriter, req *http.Request) {
+	dt := s.director.Load()
+	if dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
+	s.directorMux.Lock()
+	defer s.directorMux.Unlock()
+	if dt = s.director.Load(); dt == nil {
+		writeJson(rw, http.StatusNotFound, apiRespTargetNotExist)
+		return
+	}
+	arrived := make([]int, 0)
+	for _, dr := range dt.Arrived() {
+		arrived = append(arrived, dr.ID())
+	}
+	writeJson(rw, http.StatusOK, Map{
+		"arrived": arrived,
+	})
+}
+
 func (s *Server) routeDirectorAssign(rw http.ResponseWriter, req *http.Request) {
 	var payload struct {
 		Drone int `json:"drone" schema:"drone"`
@@ -290,9 +313,7 @@ func (s *Server) routeDirectorAssign(rw http.ResponseWriter, req *http.Request) 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	if s.controller == nil {
-		writeJson(rw, http.StatusConflict, &APIError{
-			Error: "ControllerNotExists",
-		})
+		writeJson(rw, http.StatusConflict, apiRespControllerNotExist)
 		return
 	}
 	dr := s.controller.GetDrone(payload.Drone)

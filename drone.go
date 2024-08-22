@@ -19,6 +19,8 @@ package drone
 import (
 	"context"
 	"time"
+
+	"github.com/ungerik/go3d/vec3"
 )
 
 type Drone interface {
@@ -59,6 +61,7 @@ type Drone interface {
 	MoveToYaw(ctx context.Context, pos *Gps, heading float32) error
 	MoveUntilReached(ctx context.Context, pos *Gps, radius float32) error
 	MoveWithYawUntilReached(ctx context.Context, pos *Gps, heading float32, radius float32) error
+	MoveNED(ctx context.Context, dir *vec3.T) error
 	RotateYaw(ctx context.Context, yaw float32) error
 	RotateUntilYaw(ctx context.Context, yaw, diff float32) error
 

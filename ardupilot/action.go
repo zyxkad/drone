@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/bluenviron/gomavlib/v3/pkg/dialects/common"
+	"github.com/ungerik/go3d/quaternion"
+	"github.com/ungerik/go3d/vec3"
 
 	"github.com/zyxkad/drone"
 )
@@ -130,17 +132,17 @@ func (d *Drone) MoveTo(ctx context.Context, pos *drone.Gps) error {
 		TargetSystem:    (byte)(d.ID()),
 		TargetComponent: d.component,
 		CoordinateFrame: common.MAV_FRAME_GLOBAL,
-		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE /*| common.POSITION_TARGET_TYPEMASK_VZ_IGNORE*/ | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE /*| common.POSITION_TARGET_TYPEMASK_AZ_IGNORE*/ | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
 		LatInt:          lat,
 		LonInt:          lon,
 		Alt:             pos.Alt,
 
 		// Vx:  0.8,
 		// Vy:  0.8,
-		Vz: 0.1,
+		// Vz:  0.1,
 		// Afx: 0.5,
 		// Afy: 0.5,
-		Afz: 0.1,
+		// Afz: 0.01,
 	})
 }
 
@@ -169,15 +171,36 @@ func (d *Drone) MoveToYaw(ctx context.Context, pos *drone.Gps, heading float32) 
 	})
 }
 
-func (d *Drone) RotateYaw(ctx context.Context, yaw float32) error {
-	return d.WriteMessage(&common.MessageSetPositionTargetGlobalInt{
+// MoveNED requires the drone in GUIDED(4) mode
+func (d *Drone) MoveNED(ctx context.Context, dir *vec3.T) error {
+	return d.WriteMessage(&common.MessageSetPositionTargetLocalNed{
 		TimeBootMs:      d.controller.GetBootTimeMs(),
 		TargetSystem:    (byte)(d.ID()),
 		TargetComponent: d.component,
-		CoordinateFrame: common.MAV_FRAME_GLOBAL,
-		TypeMask:        common.POSITION_TARGET_TYPEMASK_X_IGNORE | common.POSITION_TARGET_TYPEMASK_Y_IGNORE | common.POSITION_TARGET_TYPEMASK_Z_IGNORE | common.POSITION_TARGET_TYPEMASK_VX_IGNORE | common.POSITION_TARGET_TYPEMASK_VY_IGNORE | common.POSITION_TARGET_TYPEMASK_VZ_IGNORE | common.POSITION_TARGET_TYPEMASK_AX_IGNORE | common.POSITION_TARGET_TYPEMASK_AY_IGNORE | common.POSITION_TARGET_TYPEMASK_AZ_IGNORE,
-		Yaw:             yaw * math.Pi / 180,
-		// YawRate:         10 * math.Pi / 180,
+		CoordinateFrame: common.MAV_FRAME_LOCAL_OFFSET_NED,
+		TypeMask:        common.POSITION_TARGET_TYPEMASK_YAW_IGNORE | common.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+		X:               dir[0],
+		Y:               dir[1],
+		Z:               dir[2],
+
+		Vx:  0.1,
+		Vy:  0.1,
+		Vz:  -0.1,
+		Afx: 0.1,
+		Afy: 0.1,
+		Afz: -0.05,
+	})
+}
+
+func (d *Drone) RotateYaw(ctx context.Context, yaw float32) error {
+	quat := quaternion.FromZAxisAngle(yaw)
+	return d.WriteMessage(&common.MessageSetAttitudeTarget{
+		TimeBootMs:      d.controller.GetBootTimeMs(),
+		TargetSystem:    (byte)(d.ID()),
+		TargetComponent: d.component,
+		TypeMask:        common.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE | common.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE | common.ATTITUDE_TARGET_TYPEMASK_THROTTLE_IGNORE,
+		Q:               [4]float32{quat[3], quat[0], quat[1], quat[2]},
+		BodyYawRate:     10 * math.Pi / 180,
 	})
 }
 

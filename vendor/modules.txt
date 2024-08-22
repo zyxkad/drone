@@ -62,7 +62,9 @@ github.com/pkg/errors
 ## explicit; go 1.13
 github.com/ungerik/go3d/fmath
 github.com/ungerik/go3d/generic
+github.com/ungerik/go3d/quaternion
 github.com/ungerik/go3d/vec3
+github.com/ungerik/go3d/vec4
 # go.bug.st/serial v1.6.2 => github.com/zyxkad/go-serial v1.6.3-0.20240705033605-bc847fb5fdc0
 ## explicit; go 1.17
 go.bug.st/serial
