@@ -340,26 +340,15 @@ func (d *Director) TransferDrone(ctx context.Context, logger func(string)) error
 		return ctx.Err()
 	}
 	logger("Moving to target: " + midPos.String())
-	if err := dr.MoveWithYawUntilReached(ctx, midPos, 0, reachRadius); err != nil {
+	if err := dr.MoveWithYawUntilReached(ctx, midPos, d.heading, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
 	logger("Moving down: " + endPos.String())
-	if err := dr.MoveWithYawUntilReached(ctx, endPos, 0, reachRadius); err != nil {
+	if err := dr.MoveWithYawUntilReached(ctx, endPos, d.heading, reachRadius); err != nil {
 		dr.Land(ctx)
 		return fmt.Errorf("Cannot move: %w", err)
 	}
-	// logger(fmt.Sprintf("Rotating to %.3f", d.heading))
-	// if err := dr.RotateYaw(ctx, d.heading); err != nil {
-	// 	dr.Land(ctx)
-	// 	return fmt.Errorf("Cannot move: %w", err)
-	// }
-	// select {
-	// case <-time.After(time.Second * 3):
-	// case <-ctx.Done():
-	// 	dr.Land(ctx)
-	// 	return ctx.Err()
-	// }
 	flashCancel()
 	logger("Landing")
 	if err := dr.Land(ctx); err != nil {
