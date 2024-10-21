@@ -6,7 +6,7 @@ require (
 	github.com/LiterMC/go-aws v1.0.1
 	github.com/bluenviron/gomavlib/v3 v3.0.0
 	github.com/daedaleanai/ublox v0.0.0-20240403151839-d5c9b0a60ad7
-	github.com/go-gnss/rtcm v0.0.6
+	github.com/go-gnss/rtcm v0.0.7
 	github.com/gorilla/schema v1.4.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/ungerik/go3d v0.0.0-20240502073936-1137f6adf7e9
@@ -22,7 +22,7 @@ require (
 	github.com/pion/transport/v2 v2.2.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/net v0.23.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
 )
 
 replace go.bug.st/serial => github.com/zyxkad/go-serial v1.6.3-0.20240705033605-bc847fb5fdc0
